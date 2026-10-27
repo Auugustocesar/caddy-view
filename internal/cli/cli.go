@@ -77,6 +77,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.SetOutput(stderr)
 	admin := fs.String("admin", defaultAdmin, "Caddy Admin API address (unix:///path or http://host:port)")
 	listen := fs.String("listen", "127.0.0.1:8484", "address to listen on; loopback only until the UI has authentication")
+	showSecrets := fs.Bool("show-secrets", false, "do not redact passwords, tokens and other secrets in /api/config")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -94,7 +95,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return 2
 	}
 
-	handler := server.New(client, server.Options{Endpoint: client.Endpoint()})
+	if *showSecrets {
+		fmt.Fprintln(stderr, "warning: --show-secrets is on, /api/config returns secrets in clear text")
+	}
+	handler := server.New(client, server.Options{Endpoint: client.Endpoint(), ShowSecrets: *showSecrets})
 	onListen := func(addr net.Addr) {
 		fmt.Fprintf(stdout, "caddy-view listening on http://%s (Admin API: %s)\n", addr, client.Endpoint())
 	}

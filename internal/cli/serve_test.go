@@ -190,3 +190,43 @@ func TestServeReportsAddressInUse(t *testing.T) {
 		t.Errorf("stderr %q does not name the address that is in use", stderr)
 	}
 }
+
+const secretAdminConfig = `{"apps":{"http":{"servers":{"srv0":{"listen":[":443"]}}}},"provider":{"api_token":"supersecret123"},"public":"visible"}`
+
+func getConfigBody(t *testing.T, base string) string {
+	t.Helper()
+	resp, err := http.Get(base + "/api/config")
+	if err != nil {
+		t.Fatalf("GET /api/config: %v", err)
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
+func TestServeRedactsSecretsByDefault(t *testing.T) {
+	admin := fakeAdmin(t, secretAdminConfig)
+	base, stop, _, _ := startServe(t, "--admin", admin.URL)
+	defer stop()
+
+	body := getConfigBody(t, base)
+	if strings.Contains(body, "supersecret123") {
+		t.Errorf("the API leaks a secret by default: %s", body)
+	}
+	if !strings.Contains(body, "[redacted]") {
+		t.Errorf("body = %s, want the secret redacted", body)
+	}
+}
+
+func TestServeShowSecretsFlag(t *testing.T) {
+	admin := fakeAdmin(t, secretAdminConfig)
+	base, stop, _, _ := startServe(t, "--admin", admin.URL, "--show-secrets")
+	defer stop()
+
+	if body := getConfigBody(t, base); !strings.Contains(body, "supersecret123") {
+		t.Errorf("--show-secrets did not return the raw configuration: %s", body)
+	}
+}

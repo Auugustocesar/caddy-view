@@ -9,6 +9,7 @@ import (
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/netutil"
+	"github.com/Auugustocesar/caddy-view/internal/redact"
 )
 
 // Caddy is what the API needs from the Admin API client.
@@ -21,6 +22,8 @@ type Caddy interface {
 type Options struct {
 	// Endpoint is the Admin API address shown in /api/status.
 	Endpoint string
+	// ShowSecrets turns off the redaction of secrets in /api/config.
+	ShowSecrets bool
 }
 
 type api struct {
@@ -89,6 +92,9 @@ func (a *api) config(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	if !a.opts.ShowSecrets {
+		cfg = redact.Config(cfg)
 	}
 	writeJSON(w, http.StatusOK, cfg)
 }

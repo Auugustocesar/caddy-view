@@ -368,3 +368,27 @@ func TestHostCheck(t *testing.T) {
 		}
 	})
 }
+
+const secretConfig = `{"apps":{"tls":{"automation":{"policies":[{"issuers":[{"challenges":{"dns":{"provider":{"name":"cloudflare","api_token":"supersecret123"}}}}]}]}}},"public":"visible"}`
+
+func TestConfigRedactsSecretsByDefault(t *testing.T) {
+	rec := do(t, newHandler(&fakeCaddy{cfg: parse(t, secretConfig)}), http.MethodGet, "/api/config")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "supersecret123") {
+		t.Errorf("the response leaks a secret: %s", body)
+	}
+	if !strings.Contains(body, "[redacted]") || !strings.Contains(body, "visible") {
+		t.Errorf("response = %s, want the secret redacted and the rest intact", body)
+	}
+}
+
+func TestConfigShowsSecretsWhenAsked(t *testing.T) {
+	h := New(&fakeCaddy{cfg: parse(t, secretConfig)}, Options{Endpoint: testEndpoint, ShowSecrets: true})
+	rec := do(t, h, http.MethodGet, "/api/config")
+	if !strings.Contains(rec.Body.String(), "supersecret123") {
+		t.Errorf("ShowSecrets did not return the raw configuration: %s", rec.Body.String())
+	}
+}
