@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Auugustocesar/caddy-view/internal/store"
 )
 
 // safeBuffer is an io.Writer that can be read while the command is still writing to it.
@@ -366,6 +368,84 @@ func TestServeReopensTheSameHistory(t *testing.T) {
 		_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir)
 		if code := stop(); code != 0 {
 			t.Fatalf("exit code = %d, want 0 (a second start must accept the existing database)", code)
+		}
+	}
+}
+
+const accessLine = `{"level":"info","ts":1761566400.123,"logger":"http.log.access.log0","msg":"handled request",` +
+	`"request":{"remote_ip":"10.0.0.7","client_ip":"10.0.0.7","method":"GET","host":"app.example.com","uri":"/ingested?token=secret"},` +
+	`"duration":0.01,"size":10,"status":200}` + "\n"
+
+func TestServeIngestsTheAccessLogIntoTheHistory(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "access.log")
+	if err := os.WriteFile(logFile, []byte(accessLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	admin := fakeAdmin(t, goodConfig)
+	_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir, "--access-log", logFile)
+
+	// A second handle on the same database is what the API will be: it sees what ingestion committed.
+	reader, err := store.OpenSQLite(context.Background(), filepath.Join(dir, "caddy-view.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	var got []store.LogEntry
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for len(got) == 0 {
+		select {
+		case <-tick.C:
+			got, err = reader.QueryLogs(context.Background(), store.LogQuery{})
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-deadline:
+			t.Fatal("the access log was not ingested")
+		}
+	}
+	if got[0].Host != "app.example.com" || got[0].Path != "/ingested" {
+		t.Errorf("stored entry = %+v, want host app.example.com and the path without its query string", got[0])
+	}
+	if code := stop(); code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+}
+
+func TestServeKeepsTheQueryStringOnRequest(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "access.log")
+	if err := os.WriteFile(logFile, []byte(accessLine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	admin := fakeAdmin(t, goodConfig)
+	_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir, "--access-log", logFile, "--store-query")
+	defer stop()
+
+	reader, err := store.OpenSQLite(context.Background(), filepath.Join(dir, "caddy-view.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			got, _ := reader.QueryLogs(context.Background(), store.LogQuery{})
+			if len(got) == 0 {
+				continue
+			}
+			if got[0].Path != "/ingested?token=secret" {
+				t.Errorf("path = %q, want the query string kept", got[0].Path)
+			}
+			return
+		case <-deadline:
+			t.Fatal("the access log was not ingested")
 		}
 	}
 }

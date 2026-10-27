@@ -79,6 +79,33 @@ keys are set on every connection.
 - `DeleteLogsBefore(ctx, t)` removes older entries and returns how many.
 - Every method honours context cancellation, and the stores are safe for concurrent use.
 
+## Ingestion (slice 2b)
+
+`internal/ingest` reads one JSON access log file into the store. It does not reuse `logtail`: that package follows
+a file from "now" and keeps no position, while ingestion must resume from a stored offset.
+
+- **One poll, `Once`.** Load the cursor, stat the file, decide whether it is the same file, read from the offset up
+  to the last complete line, parse, and store in batches (default 500 entries). Each batch carries the cursor that
+  follows its last line, so the store commits entries and position together. A failing batch stops the poll with the
+  store's error; the cursor stays where the last stored batch ended and the next poll continues from there.
+  `Run` repeats `Once` every poll interval (default 1 s), logs failures and keeps going.
+- **First start.** With no cursor the file is read from its start: the point of the history is to include what
+  Caddy already logged.
+- **Same file or not.** The cursor keeps a file ID (inode, or the Windows file index) and a fingerprint, which is the
+  length and SHA-256 of the first `min(offset, 256)` bytes read. The file is new when the ID differs, when the
+  fingerprint of the same prefix differs (a file replaced in place), or when it is smaller than the offset
+  (truncation). A new file is read from its start and `Gaps` grows by one, because lines written between the last
+  poll and the rotation may be gone. Growth alone never counts as rotation, even for a tiny file.
+- **Lines.** Only complete lines (ending in `
+`) are consumed. A line that is not JSON, has no request, host or
+  time, or is longer than `MaxLineBytes` (default 1 MiB) is skipped and counted in `SkippedLines`.
+- **What is kept.** Time (milliseconds), `request.host`, `method`, the path of `request.uri` (query string dropped
+  unless `KeepQuery`), `status`, `duration`, `size`, and `request.client_ip` (or `remote_ip`). Headers are never read
+  into the entry.
+- **Wiring.** `serve` starts one ingester, into whichever store is open (with `--no-persist` it fills the memory
+  store, which the UI reads the same way), for the log file found at startup: the `--access-log` flag, otherwise the
+  first file from the Caddy configuration. Without a log file nothing is ingested and the doctor already says why.
+
 ## Slices
 
 | Slice | Deliverable | Done when |

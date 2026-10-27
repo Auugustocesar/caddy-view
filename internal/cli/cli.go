@@ -15,6 +15,7 @@ import (
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
+	"github.com/Auugustocesar/caddy-view/internal/ingest"
 	"github.com/Auugustocesar/caddy-view/internal/server"
 	"github.com/Auugustocesar/caddy-view/internal/store"
 	"github.com/Auugustocesar/caddy-view/internal/web"
@@ -80,9 +81,15 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return doctor.ExitCode(results)
 }
 
+// history is the store behind the UI: ingestion writes to it and the API reads from it.
+type history interface {
+	ingest.Store
+	io.Closer
+}
+
 // openHistory opens the store that keeps the history: in memory with --no-persist, otherwise the SQLite database in
 // the data directory. The directory is only touched when persisting.
-func openHistory(ctx context.Context, dataDir string, noPersist bool) (io.Closer, error) {
+func openHistory(ctx context.Context, dataDir string, noPersist bool) (history, error) {
 	if noPersist {
 		return store.NewMemory(), nil
 	}
@@ -110,6 +117,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	accessLog := fs.String("access-log", "", "JSON access log file to stream; default: found from the Caddy configuration")
 	dataDir := fs.String("data-dir", "", "directory for the history database; default: the user data directory")
 	noPersist := fs.Bool("no-persist", false, "keep the history in memory only, nothing is written to disk")
+	storeQuery := fs.Bool("store-query", false, "keep query strings in the stored request paths (they often carry tokens)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -136,13 +144,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return 2
 	}
 
-	history, err := openHistory(ctx, *dataDir, *noPersist)
+	hist, err := openHistory(ctx, *dataDir, *noPersist)
 	if err != nil {
 		fmt.Fprintf(stderr, "serve: %v\n", err)
 		return 1
 	}
-	// Ingestion (the next slice) reads and writes the history; for now it is opened and closed cleanly.
-	defer history.Close()
+	defer hist.Close()
 
 	if *showSecrets {
 		fmt.Fprintln(stderr, "warning: --show-secrets is on, /api/config returns secrets in clear text")
@@ -155,6 +162,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		AccessLogPath: *accessLog,
 		UI:            web.Handler(),
 	})
+	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.
+	stopIngest := startIngest(ctx, hist, client, *accessLog, *storeQuery, logger)
+	defer stopIngest()
+
 	onListen := func(addr net.Addr) {
 		fmt.Fprintf(stdout, "caddy-view listening on http://%s (Admin API: %s)\n", addr, client.Endpoint())
 	}
@@ -164,4 +175,54 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	}
 	fmt.Fprintln(stdout, "caddy-view stopped")
 	return 0
+}
+
+// discoverEvery is how often serve looks again for an access log while Caddy has none configured or cannot be reached.
+const discoverEvery = 30 * time.Second
+
+// startIngest copies the access log into the history in the background and returns a function that stops it and
+// waits for it to finish. The file is the one given with --access-log, otherwise the first JSON file log of the
+// running Caddy configuration, which is looked up again until one appears.
+func startIngest(ctx context.Context, h ingest.Store, client *caddy.Client, accessLog string, keepQuery bool, logger *slog.Logger) (stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		path := accessLog
+		for path == "" {
+			path = discoverAccessLog(ctx, client, logger)
+			if path != "" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(discoverEvery):
+			}
+		}
+		logger.Info("ingesting the access log into the history", "path", path)
+		// Run only returns nil, after the context is cancelled.
+		_ = ingest.New(h, ingest.Options{Path: path, KeepQuery: keepQuery, Logger: logger}).Run(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// discoverAccessLog returns the first JSON file log of the running configuration, or "" when there is none.
+func discoverAccessLog(ctx context.Context, client *caddy.Client, logger *slog.Logger) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cfg, err := client.Config(ctx)
+	if err != nil {
+		logger.Warn("cannot read the Caddy configuration to find the access log, will retry", "error", err)
+		return ""
+	}
+	files := caddy.AccessLogFiles(cfg)
+	if len(files) == 0 {
+		logger.Info("no JSON access log file is configured in Caddy, so no history is collected; see caddy-view doctor")
+		return ""
+	}
+	return files[0]
 }
