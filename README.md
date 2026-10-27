@@ -36,7 +36,7 @@ $ caddy-view doctor --admin localhost:2019
 [ ok ] admin-transport: Admin API is reached over loopback TCP
 [ ok ] admin-reachable: the Admin API returned the running configuration
 [warn] metrics: metrics are not enabled on: srv0
-       hint: Add `metrics` to the servers global option: `{ servers { metrics } }`.
+       hint: Add `metrics` to the global options: `{ metrics }`.
 [warn] access-log: access logging is not enabled on any HTTP server
        hint: Add `log { output file /var/log/caddy/access.log; format json }` to your sites.
 

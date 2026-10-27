@@ -107,8 +107,11 @@ func TestCheckMetrics(t *testing.T) {
 					t.Errorf("message %q does not mention %q", got.Message, s)
 				}
 			}
-			if tt.want != StatusOK && !strings.Contains(got.Hint, "metrics") {
-				t.Errorf("hint %q does not mention the metrics option", got.Hint)
+			if tt.want != StatusOK {
+				// `servers { metrics }` is deprecated since Caddy 2.10, so the hint must recommend the global option.
+				if !strings.Contains(got.Hint, "{ metrics }") || strings.Contains(got.Hint, "servers") {
+					t.Errorf("hint %q does not recommend the global metrics option", got.Hint)
+				}
 			}
 		})
 	}
