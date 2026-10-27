@@ -11,6 +11,8 @@ Lightweight web UI for Caddy (Go backend, Svelte frontend, SQLite). Full design 
   existing code.
 - **Always LF line endings**, also on Windows (enforced by `.gitattributes`). Never write CRLF.
 - Do not commit or push unless asked.
+- The UI build in `internal/web/dist` is committed: after changing `web/`, run `npm test` and `npm run build` in `web/`
+  and keep the result in the same commit (CI checks it).
 - Caddy is the source of truth; never leave it with an invalid config (validate with `/adapt` before `/load`).
 - Keep `docs/PLAN.md` updated when a design decision changes.
 

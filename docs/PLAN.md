@@ -43,9 +43,10 @@ Internal packages:
 | `internal/store` | SQLite storage behind a `Store` interface (`sqlite`, `memory` for tests) |
 | `internal/configmgr` | Revisions, validate/apply/rollback state machine |
 | `internal/auth` | Users, sessions, rate limiting |
-| `internal/server` | HTTP API, SSE, embedded SPA |
+| `internal/server` | HTTP API, SSE |
+| `internal/web` | Embedded SPA handler |
 | `cmd/caddy-view` | CLI: `serve`, `doctor`, `reset-password` |
-| `web/` | Svelte + Vite + Tailwind frontend |
+| `web/` | Svelte + Vite frontend (built into `internal/web/dist`) |
 
 ## 3. How it talks to Caddy
 
@@ -145,7 +146,7 @@ Floating header with tabs.
 | Logs | Live tail and historical search with filters |
 | Config | Running JSON, UI settings, database usage |
 
-Stack: Svelte + Vite + Tailwind, CodeMirror 6 for the editor (simple Caddyfile language mode), uPlot for charts.
+Stack: Svelte + Vite (Tailwind later, if the UI needs it), CodeMirror 6 for the editor (simple Caddyfile language mode), uPlot for charts.
 
 ## 9. Security
 
@@ -207,7 +208,7 @@ MVP is phases 0 to 3. Phase 0 is complete: CI runs gofmt, vet and race tests on 
 | Name | `caddy-view` |
 | Language | Go |
 | License | MIT |
-| Frontend | Svelte |
+| Frontend | Svelte 5, plain JavaScript and CSS in phase 1 (no Tailwind yet); built assets committed so `go install` works |
 | Default storage | SQLite (memory store only for tests / `--no-persist`) |
 | Postgres | Out of scope; the `Store` interface keeps the door open |
 | Config backup | User-selectable: `full` or `sites-only` (section 5) |

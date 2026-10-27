@@ -74,6 +74,46 @@ event. The history of old lines belongs to phase 2 (SQLite); this route is only 
   start). Lines written to the old file in the last poll interval before a rotation can be missed. That is
   acceptable for a live view, and phase 2 ingestion keeps a cursor with the inode and offset to do better.
 
+## The web UI
+
+A small Svelte 5 single-page app in `web/`, built with Vite into `internal/web/dist` and embedded in the binary
+with `go:embed`.
+
+- **Built assets are committed.** `go install github.com/Auugustocesar/caddy-view/cmd/caddy-view@latest` has to
+  produce a binary with a working UI, and `go install` cannot run `npm`. CI rebuilds `web/` and fails if
+  `internal/web/dist` differs from what is committed, so the two cannot drift. The cost is a few tens of KB per UI
+  change in the history.
+- **Plain JavaScript with JSDoc and plain CSS.** No TypeScript and no Tailwind in phase 1: fewer build tools and
+  dependencies for three small screens. `docs/PLAN.md` named Tailwind; this replaces it until the UI is big enough
+  to need it. Dependencies are pinned and `package-lock.json` is committed.
+- **No external requests.** No CDN, no web fonts, no analytics. The page is served with
+  `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self';
+  img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, plus
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`.
+- **Log lines are untrusted text.** They are only ever rendered as text nodes, never as HTML.
+- **Serving.** `GET`/`HEAD` only. `/api/` stays with the API (an unknown API path is a JSON 404, never the app).
+  Files under `/assets/` carry content hashes and are cached for a year (`immutable`); `index.html` is
+  `no-cache`. A missing file with an extension is a 404; any other unknown path gets `index.html`, so the
+  client-side tab routes (`/`, `/config`, `/logs`) survive a reload. The Host check applies to the UI too.
+- **Tabs.** Floating header with Dashboard, Config and Logs, routed by the URL path. Metrics, Caddyfile and Sites
+  tabs arrive with their phases and are not shown as dead links.
+- **Dashboard.** Caddy reachability banner (with the error and the Admin API endpoint when down), and the sites
+  table with each upstream's health: `numRequests`, `fails`, and a note when `upstreamsAvailable` is false.
+  Polls `/api/status` and `/api/sites` every 5 s, and stops polling while the tab is hidden.
+- **Config.** The running configuration, pretty printed, with a copy button. Redacted values show as returned.
+- **Logs.** Opens `/api/logs/stream?backlog=100`, shows a status (connecting, live, reconnecting, or the reason it
+  cannot stream, such as "no access log found"), keeps the newest 1000 lines, can pause and clear, and filters by
+  text. Lines that are Caddy JSON show time, status, method, host, URI and duration; any other line is shown raw.
+  `EventSource` reconnects by itself, so a reconnect shows a "reconnecting" state and never duplicates the screen.
+
+### How it is tested
+
+- **Go (`internal/web`, `internal/server`)**: the handler's routing, fallback, caching and security headers over an
+  in-memory file system, and the server wiring (UI vs API precedence, Host check, methods).
+- **JavaScript (Vitest, jsdom, Testing Library)**: the API client against a fake `fetch`, the log stream against a
+  fake `EventSource`, the log line formatter, and each screen rendered with fake data (including a log line that
+  contains HTML, which must appear as text).
+
 ## Slices
 
 | Slice | Deliverable | Done when |
@@ -81,5 +121,5 @@ event. The history of old lines belongs to phase 2 (SQLite); this route is only 
 | 1a | Site extraction from the config and the read-only API handler | Unit tests pass for config shapes Caddy produces and for every route, method and error case |
 | 1b | `serve` command: flags, loopback enforcement, graceful shutdown | Starts, serves the API, stops cleanly, refuses non-loopback |
 | 1c | Log tailer (`internal/logtail`), log file discovery (`caddy.AccessLogFiles`), the SSE route and `serve --access-log` | New lines reach a client; partial lines, truncation and rotation are handled without repeating lines; limits and disconnects are enforced |
-| 1d | Svelte UI embedded with `go:embed` | Dashboard, Config and Logs work in a browser against the test Caddy |
+| 1d | Svelte UI in `web/`, built into `internal/web/dist` and embedded with `go:embed`; `internal/web` handler; CI check that `dist` is current | Go and JavaScript tests pass; `serve` shows Dashboard, Config and Logs in a browser |
 | 1e | Check against the test Caddy with `metrics` and JSON access log enabled | `doctor` is all green and the UI shows real sites and live logs |

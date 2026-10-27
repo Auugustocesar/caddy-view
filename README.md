@@ -5,8 +5,8 @@
 A lightweight web UI that runs next to [Caddy](https://caddyserver.com): dashboard, metrics, logs, Caddyfile
 editor with validation and rollback, and a reverse proxy wizard.
 
-> **Status: early development.** The foundation and the read-only API are done: Admin API client, `doctor`,
-> `serve` (JSON API and live access log stream) and CI on Linux, macOS and Windows. The web UI is not built yet.
+> **Status: early development.** The foundation and the read-only UI are done: Admin API client, `doctor`, `serve`
+> with a web UI (Dashboard, Config and live Logs) and CI on Linux, macOS and Windows. Editing comes in later phases.
 > See [docs/PLAN.md](docs/PLAN.md) for the full design and [docs/phase-1.md](docs/phase-1.md) for what is next.
 
 ## Goals
@@ -124,15 +124,27 @@ go test ./...
 go mod tidy -diff
 ```
 
+The UI is a Svelte app in `web/` (Node 22.12+ or 24). Its build is committed in `internal/web/dist`, because the
+binary embeds it and `go install` cannot run `npm`. After changing anything in `web/`, rebuild and commit the result;
+CI fails when the two differ.
+
+```sh
+cd web
+npm ci
+npm test
+npm run build   # writes ../internal/web/dist
+npm run dev     # hot reload, proxies /api to `caddy-view serve` on 127.0.0.1:8484
+```
+
 CI also runs `staticcheck`, `govulncheck` (weekly too, because new vulnerabilities appear without code changes)
-and the tests with `-race` and shuffled order on Linux, macOS and Windows.
+and the tests with `-race` and shuffled order on Linux, macOS and Windows, plus the UI tests and `npm audit`.
 
 ## Roadmap
 
 | Phase | Deliverable | State |
 |---|---|---|
 | 0 | Repo, structure, `doctor`, CI | Done |
-| 1 | Read-only UI: dashboard, config, live logs | In progress: API, `serve` and log stream done; UI next |
+| 1 | Read-only UI: dashboard, config, live logs | Done except the check against the test Caddy (1e) |
 | 2 | SQLite, log ingestion, metrics history | Planned |
 | 3 | Caddyfile editing with validation and rollback | Planned |
 | 4 | Reverse proxy wizard and traffic charts | Planned |

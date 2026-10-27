@@ -5,6 +5,7 @@ package modulepath
 
 import (
 	"bufio"
+	"encoding/json"
 	"go/parser"
 	"go/token"
 	"go/version"
@@ -53,7 +54,8 @@ func TestCIRunsTheQualityGates(t *testing.T) {
 		t.Fatal(err)
 	}
 	workflow := string(data)
-	for _, gate := range []string{"staticcheck", "govulncheck", "go mod tidy -diff", "go vet", "-race", "-shuffle=on", "schedule:"} {
+	for _, gate := range []string{"staticcheck", "govulncheck", "go mod tidy -diff", "go vet", "-race", "-shuffle=on", "schedule:",
+		"npm ci", "npm test", "npm run build", "git diff --exit-code"} {
 		if !strings.Contains(workflow, gate) {
 			t.Errorf("ci.yml does not run or mention %q", gate)
 		}
@@ -110,5 +112,29 @@ func TestInternalImportsUseTheModulePath(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFrontendDependenciesArePinned(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "web", "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		t.Fatal(err)
+	}
+	for _, deps := range []map[string]string{pkg.Dependencies, pkg.DevDependencies} {
+		for name, version := range deps {
+			if strings.ContainsAny(version, "^~*<>|") || version == "latest" {
+				t.Errorf("%s is %q, want an exact version so builds are reproducible", name, version)
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, "web", "package-lock.json")); err != nil {
+		t.Errorf("web/package-lock.json is missing: %v", err)
 	}
 }

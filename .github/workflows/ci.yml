@@ -33,6 +33,40 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+  web:
+    name: web UI (tests and committed build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: npm test
+        run: npm test
+
+      - name: npm audit
+        run: npm audit
+
+      - name: npm run build
+        run: npm run build
+
+      # The Go binary embeds internal/web/dist, so what is committed must be what the sources build.
+      - name: committed build is current
+        working-directory: .
+        run: |
+          git add --intent-to-add internal/web/dist
+          git diff --exit-code -- internal/web/dist
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
