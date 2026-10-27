@@ -62,6 +62,96 @@ func TestSQLiteKeepsMetricsAcrossAReopen(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreMeetsTheRollupContract(t *testing.T) {
+	storetest.RunRollups(t, func(t *testing.T) storetest.RollupStore { return store.NewMemory() })
+}
+
+func TestSQLiteStoreMeetsTheRollupContract(t *testing.T) {
+	storetest.RunRollups(t, func(t *testing.T) storetest.RollupStore { return openForContract(t) })
+}
+
+func TestMemoryStoreMeetsTheRetentionContract(t *testing.T) {
+	storetest.RunPrune(t, func(t *testing.T) storetest.PruneStore { return store.NewMemory() })
+}
+
+func TestSQLiteStoreMeetsTheRetentionContract(t *testing.T) {
+	storetest.RunPrune(t, func(t *testing.T) storetest.PruneStore { return openForContract(t) })
+}
+
+func openForContract(t *testing.T) *store.SQLite {
+	t.Helper()
+	s, err := store.OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "caddy-view.db"))
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	return s
+}
+
+func TestSQLiteKeepsRollupsAcrossAReopen(t *testing.T) {
+	path := dbPath(t)
+	ctx := context.Background()
+	first := open(t, path)
+	err := first.AppendLog(ctx, store.LogBatch{Entries: []store.LogEntry{{Time: base, Host: "h", Status: 200, Duration: time.Millisecond, Bytes: 5}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+
+	got, err := open(t, path).QueryTraffic(ctx, store.TrafficQuery{Resolution: store.PerHour})
+	if err != nil || len(got) != 1 || got[0].Count != 1 || got[0].Bytes != 5 {
+		t.Errorf("rollups after a reopen = %+v, %v, want the stored request", got, err)
+	}
+}
+
+func TestLatencyUpperBounds(t *testing.T) {
+	bounds := store.LatencyUpperBounds()
+	if len(bounds) != store.LatencyBuckets-1 {
+		t.Fatalf("got %d bounds, want %d: the last bucket is open", len(bounds), store.LatencyBuckets-1)
+	}
+	for i := 1; i < len(bounds); i++ {
+		if bounds[i] <= bounds[i-1] {
+			t.Errorf("bounds %v are not strictly increasing", bounds)
+		}
+	}
+	bounds[0] = time.Hour // the caller must not be able to change the real bounds
+	if again := store.LatencyUpperBounds(); again[0] == time.Hour {
+		t.Error("changing the returned slice changed the bounds")
+	}
+}
+
+func TestLatencyQuantile(t *testing.T) {
+	bounds := store.LatencyUpperBounds()
+	hist := func(pairs ...int) (h [store.LatencyBuckets]int64) {
+		for i := 0; i < len(pairs); i += 2 {
+			h[pairs[i]] = int64(pairs[i+1])
+		}
+		return h
+	}
+	tests := []struct {
+		name string
+		h    [store.LatencyBuckets]int64
+		q    float64
+		want time.Duration
+	}{
+		{"an empty histogram", hist(), 0.95, 0},
+		{"everything in the first bucket", hist(0, 50), 0.95, bounds[0]},
+		{"the median of two buckets", hist(1, 90, 4, 10), 0.5, bounds[1]},
+		{"p90 is still in the big bucket", hist(1, 90, 4, 10), 0.9, bounds[1]},
+		{"p95 reaches the small bucket", hist(1, 90, 4, 10), 0.95, bounds[4]},
+		{"the open bucket gives the last bound", hist(store.LatencyBuckets-1, 3), 0.95, bounds[len(bounds)-1]},
+		{"a quantile of zero is the first request", hist(2, 1, 5, 1), 0, bounds[2]},
+		{"a quantile above one is the slowest", hist(2, 1, 5, 1), 7, bounds[5]},
+		{"a negative quantile is the first request", hist(2, 1, 5, 1), -1, bounds[2]},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := store.LatencyQuantile(tt.h, tt.q); got != tt.want {
+				t.Errorf("LatencyQuantile = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func dbPath(t *testing.T) string {
 	t.Helper()
 	// The directory does not exist yet: OpenSQLite creates it.

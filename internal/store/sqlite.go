@@ -21,7 +21,7 @@ import (
 )
 
 // LatestSchemaVersion is the number of the last migration this version of caddy-view knows.
-const LatestSchemaVersion = 2
+const LatestSchemaVersion = 3
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -203,12 +203,17 @@ func (s *SQLite) AppendLog(ctx context.Context, batch LogBatch) error {
 			return fmt.Errorf("append log: %w", err)
 		}
 		defer stmt.Close()
-		for _, e := range batch.Entries {
+		normalized := make([]LogEntry, len(batch.Entries))
+		for i, e := range batch.Entries {
 			e = normalize(e)
+			normalized[i] = e
 			if _, err := stmt.ExecContext(ctx, e.Time.UnixMilli(), e.Host, e.Method, e.Path, e.Status,
 				e.Duration.Microseconds(), e.Bytes, e.ClientIP); err != nil {
 				return fmt.Errorf("append log: %w", err)
 			}
+		}
+		if err := addRollups(ctx, tx, normalized); err != nil {
+			return fmt.Errorf("append log: %w", err)
 		}
 	}
 	if c := batch.Cursor; c.Path != "" {

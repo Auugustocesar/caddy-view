@@ -140,6 +140,34 @@ aggregated while scraping.
   `promtext.FormatLabels`, which the store treats as opaque.
 - **Wiring.** `serve` runs one scraper every 15 s against the same Admin API client, into the same store.
 
+## Rollups, retention and the size cap (slice 2d)
+
+- **Rollups are written with the entries.** `AppendLog` also adds each entry to a minute bucket and an hour bucket,
+  in the same transaction as the entries and the cursor. A rollup therefore always equals the raw entries it was
+  made from: a restart, a rotation or a failing batch cannot make them drift, and nothing has to be recomputed.
+  A bucket is keyed by resolution, start time (UTC, aligned to the minute or the hour), host and status class
+  (`1` to `5` for 1xx to 5xx, `0` for anything else). It holds the request count, bytes, the sum and the maximum of
+  the duration, and a latency histogram.
+- **Latency histogram.** Fixed upper bounds of 5, 10, 25, 50, 100, 250, 500 ms and 1, 2.5, 5, 10 s plus one open
+  bucket, 12 counters in all. Counters add up across buckets, hosts and classes, so a p95 over any range is the
+  upper bound of the bucket that holds the 95th percentile (`store.LatencyQuantile`); for the open bucket the answer
+  is the last bound, meaning "at least". Rollups are not backfilled: no release exists yet, so a database from the
+  earlier slices is simply deleted.
+- **`QueryTraffic`** returns buckets of one resolution in `[From, To)` (by bucket start), optionally for one host,
+  summed over hosts, one row per start and status class, oldest first, at most `MaxTrafficLimit` = 10,000 rows.
+- **What retention removes.** Raw data (log entries, metric samples and minute rollups) older than `--retain-logs`
+  (default 14 days) and hour rollups older than `--retain-rollups` (default 90 days). `internal/retain` does it
+  once at start and then every ten minutes. `--retain-logs` and `--retain-rollups` take Go durations plus a `d`
+  suffix for days (`36h`, `14d`).
+- **The size cap.** `--max-db-size` (default `1GiB`, `0` turns it off; plain bytes or `KiB`, `MiB`, `GiB`) bounds the
+  bytes in use, meaning pages that hold data, not the file length: SQLite keeps the free pages for reuse and the
+  file never grows past what was used at its peak. While the use is over the cap, the oldest 10,000 log entries are
+  deleted, then, once there are no logs, the oldest 10,000 metric samples. Rollups are never trimmed by the cap,
+  because they are tiny and carry the long history. If the cap still cannot be met, the problem is logged and the
+  next round tries again.
+- **Memory store.** `--no-persist` applies the same retention. Its size is an estimate of the bytes held, enough for
+  the cap to bound memory.
+
 ## Slices
 
 | Slice | Deliverable | Done when |

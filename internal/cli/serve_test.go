@@ -495,3 +495,74 @@ func TestServeScrapesTheMetricsIntoTheHistory(t *testing.T) {
 		t.Errorf("exit code = %d, want 0", code)
 	}
 }
+
+func TestServeRejectsBadRetentionFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"--retain-logs", "forever"},
+		{"--retain-logs", "-1d"},
+		{"--retain-rollups", "1.5d"},
+		{"--max-db-size", "lots"},
+		{"--max-db-size", "-1"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			code, stdout, stderr := run(t, append([]string{"serve", "--listen", "127.0.0.1:0", "--no-persist"}, args...)...)
+			if code != 2 {
+				t.Errorf("exit code = %d, want 2", code)
+			}
+			if !strings.Contains(stderr, args[0]) {
+				t.Errorf("stderr %q does not name the flag %s", stderr, args[0])
+			}
+			if strings.Contains(stdout, "listening") {
+				t.Errorf("serve started listening despite a bad flag: %s", stdout)
+			}
+		})
+	}
+}
+
+func TestServePrunesDataPastItsRetention(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "caddy-view.db")
+	ctx := context.Background()
+
+	// A database from an earlier run, holding one very old entry and one recent one.
+	seed, err := store.OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	err = seed.AppendLog(ctx, store.LogBatch{Entries: []store.LogEntry{
+		{Time: old, Host: "old.example.com", Path: "/old", Status: 200},
+		{Time: time.Now(), Host: "new.example.com", Path: "/new", Status: 200},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed.Close()
+
+	admin := fakeAdmin(t, goodConfig)
+	_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir, "--retain-logs", "14d")
+	defer stop()
+
+	reader, err := store.OpenSQLite(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			got, err := reader.QueryLogs(ctx, store.LogQuery{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) == 1 && got[0].Path == "/new" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the entry past the retention was not deleted, or the recent one was")
+		}
+	}
+}

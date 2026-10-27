@@ -21,14 +21,18 @@ func sample(name, labels string, at time.Time, value, raw float64) store.MetricS
 	return store.MetricSample{Name: name, Labels: labels, Time: at, Value: value, Raw: raw}
 }
 
-func mustAppendMetrics(t *testing.T, s MetricStore, samples ...store.MetricSample) {
+func mustAppendMetrics(t *testing.T, s interface {
+	AppendMetrics(context.Context, []store.MetricSample) error
+}, samples ...store.MetricSample) {
 	t.Helper()
 	if err := s.AppendMetrics(context.Background(), samples); err != nil {
 		t.Fatalf("AppendMetrics: %v", err)
 	}
 }
 
-func mustQueryMetrics(t *testing.T, s MetricStore, q store.MetricQuery) []store.MetricSample {
+func mustQueryMetrics(t *testing.T, s interface {
+	QueryMetrics(context.Context, store.MetricQuery) ([]store.MetricSample, error)
+}, q store.MetricQuery) []store.MetricSample {
 	t.Helper()
 	got, err := s.QueryMetrics(context.Background(), q)
 	if err != nil {

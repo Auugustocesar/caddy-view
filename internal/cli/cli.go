@@ -16,6 +16,7 @@ import (
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
 	"github.com/Auugustocesar/caddy-view/internal/ingest"
+	"github.com/Auugustocesar/caddy-view/internal/retain"
 	"github.com/Auugustocesar/caddy-view/internal/scrape"
 	"github.com/Auugustocesar/caddy-view/internal/server"
 	"github.com/Auugustocesar/caddy-view/internal/store"
@@ -82,10 +83,12 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return doctor.ExitCode(results)
 }
 
-// history is the store behind the UI: ingestion and the metrics scraper write to it and the API reads from it.
+// history is the store behind the UI: ingestion and the metrics scraper write to it, retention prunes it and the API
+// reads from it.
 type history interface {
 	ingest.Store
 	scrape.Store
+	retain.Store
 	io.Closer
 }
 
@@ -119,6 +122,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	accessLog := fs.String("access-log", "", "JSON access log file to stream; default: found from the Caddy configuration")
 	dataDir := fs.String("data-dir", "", "directory for the history database; default: the user data directory")
 	noPersist := fs.Bool("no-persist", false, "keep the history in memory only, nothing is written to disk")
+	retainLogs := fs.String("retain-logs", "14d", "how long log entries, metric samples and minute rollups are kept, such as 36h or 14d; 0 keeps them forever")
+	retainRollups := fs.String("retain-rollups", "90d", "how long hour rollups are kept, such as 90d; 0 keeps them forever")
+	maxDBSize := fs.String("max-db-size", "1GiB", "most the history may hold, such as 512MiB or 1GiB; above it the oldest raw data is deleted; 0 turns the cap off")
 	storeQuery := fs.Bool("store-query", false, "keep query strings in the stored request paths (they often carry tokens)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -146,6 +152,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return 2
 	}
 
+	policy, err := retentionPolicy(*retainLogs, *retainRollups, *maxDBSize)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
 	hist, err := openHistory(ctx, *dataDir, *noPersist)
 	if err != nil {
 		fmt.Fprintf(stderr, "serve: %v\n", err)
@@ -169,6 +181,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	defer stopIngest()
 	stopScrape := startScrape(ctx, hist, client, logger)
 	defer stopScrape()
+	stopRetain := background(ctx, func(ctx context.Context) {
+		// Run only returns nil, after the context is cancelled.
+		_ = retain.New(hist, retain.Options{Policy: policy, Logger: logger}).Run(ctx)
+	})
+	defer stopRetain()
 
 	onListen := func(addr net.Addr) {
 		fmt.Fprintf(stdout, "caddy-view listening on http://%s (Admin API: %s)\n", addr, client.Endpoint())
@@ -245,4 +262,20 @@ func discoverAccessLog(ctx context.Context, client *caddy.Client, logger *slog.L
 		return ""
 	}
 	return files[0]
+}
+
+// retentionPolicy reads the retention flags. The error names the flag that is wrong.
+func retentionPolicy(retainLogs, retainRollups, maxDBSize string) (retain.Policy, error) {
+	var p retain.Policy
+	var err error
+	if p.Raw, err = parseDays(retainLogs); err != nil {
+		return retain.Policy{}, fmt.Errorf("invalid --retain-logs: %w", err)
+	}
+	if p.Rollups, err = parseDays(retainRollups); err != nil {
+		return retain.Policy{}, fmt.Errorf("invalid --retain-rollups: %w", err)
+	}
+	if p.MaxBytes, err = parseSize(maxDBSize); err != nil {
+		return retain.Policy{}, fmt.Errorf("invalid --max-db-size: %w", err)
+	}
+	return p, nil
 }

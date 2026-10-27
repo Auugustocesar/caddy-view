@@ -31,14 +31,18 @@ func entry(host, path string, status int, at time.Time) store.LogEntry {
 
 func batchOf(entries ...store.LogEntry) store.LogBatch { return store.LogBatch{Entries: entries} }
 
-func mustAppend(t *testing.T, s Store, entries ...store.LogEntry) {
+func mustAppend(t *testing.T, s interface {
+	AppendLog(context.Context, store.LogBatch) error
+}, entries ...store.LogEntry) {
 	t.Helper()
 	if err := s.AppendLog(context.Background(), batchOf(entries...)); err != nil {
 		t.Fatalf("AppendLog: %v", err)
 	}
 }
 
-func mustQuery(t *testing.T, s Store, q store.LogQuery) []store.LogEntry {
+func mustQuery(t *testing.T, s interface {
+	QueryLogs(context.Context, store.LogQuery) ([]store.LogEntry, error)
+}, q store.LogQuery) []store.LogEntry {
 	t.Helper()
 	got, err := s.QueryLogs(context.Background(), q)
 	if err != nil {
