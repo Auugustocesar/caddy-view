@@ -3,8 +3,8 @@
 A lightweight web UI that runs next to [Caddy](https://caddyserver.com): see status, metrics and logs, edit the
 Caddyfile safely, and manage reverse proxies.
 
-Status: planning (no code yet). This document is the source of truth for scope and design; update it when a
-decision changes.
+Status: phase 0 in progress (Admin API client and `doctor` command done, CI pending). This document is the source
+of truth for scope and design; update it when a decision changes.
 
 ## 1. Scope
 
@@ -210,4 +210,3 @@ MVP is phases 0 to 3.
 | Default storage | SQLite (memory store only for tests / `--no-persist`) |
 | Postgres | Out of scope; the `Store` interface keeps the door open |
 | Config backup | User-selectable: `full` or `sites-only` (section 5) |
-| Reference project | [caddy-visualizer](https://github.com/dree007/caddy-visualizer), used only as a source of good practices, not copied |
