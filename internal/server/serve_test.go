@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"strings"
@@ -41,11 +42,11 @@ func TestValidateListen(t *testing.T) {
 			if err == nil {
 				t.Fatalf("ValidateListen(%q) = nil, want an error", addr)
 			}
-			if !strings.Contains(err.Error(), "loopback") {
-				t.Errorf("error %q does not explain that only loopback is allowed", err)
+			if !errors.Is(err, ErrNotLoopback) {
+				t.Errorf("error %q is not ErrNotLoopback", err)
 			}
-			if !strings.Contains(err.Error(), "authentication") {
-				t.Errorf("error %q does not say why (no authentication yet)", err)
+			if errors.Is(err, ErrInvalidListen) {
+				t.Errorf("error %q is also ErrInvalidListen; a well-formed address must not be reported as malformed", err)
 			}
 		})
 	}
@@ -57,8 +58,11 @@ func TestValidateListen(t *testing.T) {
 			if err == nil {
 				t.Fatalf("ValidateListen(%q) = nil, want an error", addr)
 			}
-			if !strings.Contains(err.Error(), "invalid listen address") {
-				t.Errorf("error %q does not say the address is invalid", err)
+			if !errors.Is(err, ErrInvalidListen) {
+				t.Errorf("error %q is not ErrInvalidListen", err)
+			}
+			if errors.Is(err, ErrNotLoopback) {
+				t.Errorf("error %q is also ErrNotLoopback; a malformed address says nothing about loopback", err)
 			}
 		})
 	}
@@ -170,8 +174,8 @@ func TestServeLetsRequestsInFlightFinish(t *testing.T) {
 func TestServeRefusesNonLoopbackWithoutListening(t *testing.T) {
 	called := false
 	err := Serve(context.Background(), "0.0.0.0:0", http.NotFoundHandler(), func(net.Addr) { called = true })
-	if err == nil || !strings.Contains(err.Error(), "loopback") {
-		t.Fatalf("Serve = %v, want an error about loopback", err)
+	if !errors.Is(err, ErrNotLoopback) {
+		t.Fatalf("Serve = %v, want ErrNotLoopback", err)
 	}
 	if called {
 		t.Error("onListen was called for an address that must be refused")

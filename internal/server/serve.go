@@ -17,19 +17,25 @@ const (
 	shutdownTimeout   = 5 * time.Second
 )
 
+// ErrInvalidListen means a listen address is malformed: no port, or a port that is not a number from 0 to 65535.
+var ErrInvalidListen = errors.New("invalid listen address")
+
+// ErrNotLoopback means a listen address is well formed but does not name this machine.
+var ErrNotLoopback = errors.New("listen address is not a loopback address")
+
 // ValidateListen accepts only a loopback host with a port, such as 127.0.0.1:8484, localhost:8484 or [::1]:8484.
 // Until the UI has authentication, listening on any other address would expose the Caddy configuration.
 func ValidateListen(addr string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return fmt.Errorf("invalid listen address %q: %v", addr, err)
+		return fmt.Errorf("%w %q: %w", ErrInvalidListen, addr, err)
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
-		return fmt.Errorf("invalid listen address %q: port %q must be a number from 0 to 65535", addr, port)
+		return fmt.Errorf("%w %q: port %q must be a number from 0 to 65535", ErrInvalidListen, addr, port)
 	}
 	if !netutil.IsLoopbackHost(host) {
-		return fmt.Errorf("listen address %q is not a loopback address; caddy-view has no authentication yet, "+
-			"so it only listens on 127.0.0.1, localhost or [::1] (use an SSH tunnel to reach it from another machine)", addr)
+		return fmt.Errorf("%w: %q (caddy-view has no authentication yet, so it only listens on 127.0.0.1, "+
+			"localhost or [::1]; use an SSH tunnel to reach it from another machine)", ErrNotLoopback, addr)
 	}
 	return nil
 }
