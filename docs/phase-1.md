@@ -29,6 +29,13 @@ metrics history and arrive with phase 2.
 - **The API never invents data.** Sites and upstreams are derived from `GET /config/` and
   `GET /reverse_proxy/upstreams`. If upstream state is unavailable, sites are still returned and the response says
   so.
+- **Secrets are redacted by default.** `GET /api/config` replaces the value of sensitive keys (`password`, `token`,
+  `secret`, `key`, anything ending in `_key`, `_token`, `_secret` or `_password`, and credential headers such as
+  `Authorization`) with `[redacted]`. Placeholders like `{env.TOKEN}` or `{file./path}` are references and stay
+  visible. `serve --show-secrets` turns the redaction off.
+- **Logging.** `log/slog` text logs go to stderr. Failures to read Caddy and rejected hosts are warnings, every
+  request is a debug line, and polling `/api/status` while Caddy is down stays out of the warning level so it cannot
+  flood the log. `serve --log-level` picks the verbosity.
 - **Caddy version is not shown yet.** The Admin API has no version endpoint. Revisit when we know a reliable source.
 
 ## API
