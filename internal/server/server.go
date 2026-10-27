@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
+	"github.com/Auugustocesar/caddy-view/internal/netutil"
 )
 
 // Caddy is what the API needs from the Admin API client.
@@ -66,7 +67,7 @@ func loopbackHost(hostport string) bool {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
 	}
-	return isLoopbackName(host)
+	return netutil.IsLoopbackHost(host)
 }
 
 func (a *api) status(w http.ResponseWriter, r *http.Request) {

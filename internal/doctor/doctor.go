@@ -7,6 +7,9 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/Auugustocesar/caddy-view/internal/cfgpath"
+	"github.com/Auugustocesar/caddy-view/internal/netutil"
 )
 
 // Status is the outcome of a single check.
@@ -62,12 +65,7 @@ func isLoopback(addr string) bool {
 	if h, _, err := net.SplitHostPort(addr); err == nil {
 		host = h
 	}
-	host = strings.Trim(host, "[]")
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return netutil.IsLoopbackHost(host)
 }
 
 // CheckMetrics reports whether every HTTP server has metrics enabled.
@@ -80,7 +78,7 @@ func CheckMetrics(cfg Config) Result {
 	}
 	var missing []string
 	for name, srv := range servers {
-		if m, ok := srv.(map[string]any); !ok || m["metrics"] == nil {
+		if cfgpath.Get(srv, "metrics") == nil {
 			missing = append(missing, name)
 		}
 	}
@@ -104,7 +102,7 @@ func CheckAccessLog(cfg Config) Result {
 	const hint = "Add `log { output file /var/log/caddy/access.log; format json }` to your sites."
 	var enabled bool
 	for _, srv := range httpServers(cfg) {
-		if m, ok := srv.(map[string]any); ok && m["logs"] != nil {
+		if cfgpath.Get(srv, "logs") != nil {
 			enabled = true
 			break
 		}
@@ -114,11 +112,11 @@ func CheckAccessLog(cfg Config) Result {
 	}
 	var fileLoggers, jsonFileLoggers int
 	for _, l := range loggers(cfg) {
-		if dig(l, "writer", "output") != "file" {
+		if cfgpath.Get(l, "writer", "output") != "file" {
 			continue
 		}
 		fileLoggers++
-		if dig(l, "encoder", "format") == "json" {
+		if cfgpath.Get(l, "encoder", "format") == "json" {
 			jsonFileLoggers++
 		}
 	}
@@ -154,27 +152,14 @@ func CheckImport(caddyfile, target string) Result {
 }
 
 func httpServers(cfg Config) map[string]any {
-	servers, _ := dig(map[string]any(cfg), "apps", "http", "servers").(map[string]any)
-	return servers
+	return cfgpath.Map(cfgpath.Get(map[string]any(cfg), "apps", "http", "servers"))
 }
 
 func loggers(cfg Config) []any {
-	logs, _ := dig(map[string]any(cfg), "logging", "logs").(map[string]any)
+	logs := cfgpath.Map(cfgpath.Get(map[string]any(cfg), "logging", "logs"))
 	out := make([]any, 0, len(logs))
 	for _, l := range logs {
 		out = append(out, l)
 	}
 	return out
-}
-
-// dig walks nested JSON objects and returns nil when any step is missing.
-func dig(v any, keys ...string) any {
-	for _, k := range keys {
-		m, ok := v.(map[string]any)
-		if !ok {
-			return nil
-		}
-		v = m[k]
-	}
-	return v
 }

@@ -7,8 +7,9 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
+
+	"github.com/Auugustocesar/caddy-view/internal/netutil"
 )
 
 const (
@@ -26,20 +27,11 @@ func ValidateListen(addr string) error {
 	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
 		return fmt.Errorf("invalid listen address %q: port %q must be a number from 0 to 65535", addr, port)
 	}
-	if !isLoopbackName(host) {
+	if !netutil.IsLoopbackHost(host) {
 		return fmt.Errorf("listen address %q is not a loopback address; caddy-view has no authentication yet, "+
 			"so it only listens on 127.0.0.1, localhost or [::1] (use an SSH tunnel to reach it from another machine)", addr)
 	}
 	return nil
-}
-
-func isLoopbackName(host string) bool {
-	host = strings.ToLower(strings.Trim(host, "[]"))
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // Serve listens on addr (which must pass ValidateListen), serves h, and returns nil after a graceful shutdown
