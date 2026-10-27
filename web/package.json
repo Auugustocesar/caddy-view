@@ -1,0 +1,22 @@
+{
+  "name": "caddy-view-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": "^22.12.0 || ^24.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@testing-library/svelte": "5.4.2",
+    "jsdom": "30.1.3",
+    "svelte": "5.57.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}
