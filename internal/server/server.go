@@ -4,8 +4,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/netutil"
@@ -24,28 +26,36 @@ type Options struct {
 	Endpoint string
 	// ShowSecrets turns off the redaction of secrets in /api/config.
 	ShowSecrets bool
+	// Logger receives operational logs. A nil Logger discards them.
+	Logger *slog.Logger
 }
 
 type api struct {
 	caddy Caddy
 	opts  Options
+	log   *slog.Logger
 }
 
 // New returns the read-only API handler. It only serves GET, and only to loopback Host names.
 func New(c Caddy, opts Options) http.Handler {
-	a := &api{caddy: c, opts: opts}
+	log := opts.Logger
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	a := &api{caddy: c, opts: opts, log: log}
 	routes := map[string]http.HandlerFunc{
 		"/api/status": a.status,
 		"/api/config": a.config,
 		"/api/sites":  a.sites,
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return a.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Type", "application/json")
 		h.Set("Cache-Control", "no-store")
 		h.Set("X-Content-Type-Options", "nosniff")
 
 		if !loopbackHost(r.Host) {
+			a.log.Warn("request rejected: host not allowed", "host", r.Host, "method", r.Method, "path", r.URL.Path)
 			writeError(w, http.StatusForbidden, "host not allowed")
 			return
 		}
@@ -60,8 +70,32 @@ func New(c Caddy, opts Options) http.Handler {
 			return
 		}
 		handler(w, r)
+	}))
+}
+
+// logRequests logs every request at debug level, so normal operation stays quiet.
+func (a *api) logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		a.log.Debug("request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration", time.Since(start))
 	})
 }
+
+// statusRecorder remembers the status code of a response.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer, for example to flush a stream.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // loopbackHost reports whether a Host header names this machine. Anything else is refused, which blocks DNS
 // rebinding: a page on another origin reaching the API through a hostname it controls.
@@ -81,6 +115,8 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 	}
 	s := caddyStatus{Reachable: true, Endpoint: a.opts.Endpoint}
 	if _, err := a.caddy.Config(r.Context()); err != nil {
+		// Debug, not warn: the UI polls this route, and an unreachable Caddy would flood the log.
+		a.log.Debug("caddy is not reachable", "error", err)
 		s.Reachable = false
 		s.Error = err.Error()
 	}
@@ -90,7 +126,7 @@ func (a *api) status(w http.ResponseWriter, r *http.Request) {
 func (a *api) config(w http.ResponseWriter, r *http.Request) {
 	cfg, err := a.caddy.Config(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		a.badGateway(w, r, err)
 		return
 	}
 	if !a.opts.ShowSecrets {
@@ -114,12 +150,15 @@ type siteJSON struct {
 func (a *api) sites(w http.ResponseWriter, r *http.Request) {
 	cfg, err := a.caddy.Config(r.Context())
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		a.badGateway(w, r, err)
 		return
 	}
 
 	state := map[string]caddy.Upstream{}
 	ups, upsErr := a.caddy.Upstreams(r.Context())
+	if upsErr != nil {
+		a.log.Warn("upstream state unavailable, returning sites without it", "error", upsErr)
+	}
 	for _, u := range ups {
 		state[u.Address] = u
 	}
@@ -135,6 +174,13 @@ func (a *api) sites(w http.ResponseWriter, r *http.Request) {
 		sites = append(sites, site)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sites": sites, "upstreamsAvailable": upsErr == nil})
+}
+
+// badGateway logs why Caddy could not be read, so the cause is visible to the operator and not only to the
+// client, and answers 502.
+func (a *api) badGateway(w http.ResponseWriter, r *http.Request, err error) {
+	a.log.Warn("caddy request failed", "path", r.URL.Path, "error", err)
+	writeError(w, http.StatusBadGateway, err.Error())
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
