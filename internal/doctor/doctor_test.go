@@ -77,6 +77,17 @@ func TestCheckMetrics(t *testing.T) {
 			mentionsAll: []string{"srv1", "srv2"},
 		},
 		{
+			// Caddy 2.10 and later adapt `servers { metrics }` to a setting of the whole HTTP app.
+			name:   "metrics enabled for the whole HTTP app",
+			config: `{"apps":{"http":{"metrics":{},"servers":{"srv0":{},"srv1":{}}}}}`,
+			want:   StatusOK,
+		},
+		{
+			name:   "app-level metrics without any server",
+			config: `{"apps":{"http":{"metrics":{},"servers":{}}}}`,
+			want:   StatusWarn,
+		},
+		{
 			name:   "no HTTP app at all",
 			config: `{}`,
 			want:   StatusWarn,

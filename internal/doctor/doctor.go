@@ -68,7 +68,8 @@ func isLoopback(addr string) bool {
 	return netutil.IsLoopbackHost(host)
 }
 
-// CheckMetrics reports whether every HTTP server has metrics enabled.
+// CheckMetrics reports whether metrics are enabled. Caddy 2.10 and later adapt `servers { metrics }` to a setting of
+// the whole HTTP app; older versions, and the JSON config, set it per server. Either counts.
 func CheckMetrics(cfg Config) Result {
 	const id = "metrics"
 	const hint = "Add `metrics` to the servers global option: `{ servers { metrics } }`."
@@ -76,9 +77,10 @@ func CheckMetrics(cfg Config) Result {
 	if len(servers) == 0 {
 		return Result{ID: id, Status: StatusWarn, Message: "no HTTP servers are configured, so there are no metrics to read", Hint: hint}
 	}
+	appWide := cfgpath.Get(map[string]any(cfg), "apps", "http", "metrics") != nil
 	var missing []string
 	for name, srv := range servers {
-		if cfgpath.Get(srv, "metrics") == nil {
+		if !appWide && cfgpath.Get(srv, "metrics") == nil {
 			missing = append(missing, name)
 		}
 	}
