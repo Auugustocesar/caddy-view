@@ -9,8 +9,8 @@ import (
 	"io"
 	"time"
 
-	"caddy-view/internal/caddy"
-	"caddy-view/internal/doctor"
+	"github.com/Auugustocesar/caddy-view/internal/caddy"
+	"github.com/Auugustocesar/caddy-view/internal/doctor"
 )
 
 const usage = `Usage: caddy-view <command> [flags]

@@ -5,7 +5,7 @@ import (
 	"context"
 	"os"
 
-	"caddy-view/internal/cli"
+	"github.com/Auugustocesar/caddy-view/internal/cli"
 )
 
 func main() {

@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"caddy-view/internal/caddy"
+	"github.com/Auugustocesar/caddy-view/internal/caddy"
 )
 
 // DefaultManagedFile is the file caddy-view writes, relative to the Caddyfile directory.

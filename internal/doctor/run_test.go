@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"testing"
 
-	"caddy-view/internal/caddy"
+	"github.com/Auugustocesar/caddy-view/internal/caddy"
 )
 
 type fakeFetcher struct {
