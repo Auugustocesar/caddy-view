@@ -9,6 +9,7 @@ Lightweight web UI for Caddy (Go backend, Svelte frontend, SQLite). Full design 
 - **Tests first, always.** For any feature, fix or improvement: write the tests from the requirement, run them and
   confirm they fail for the right reason, then write the code. Never write tests after the fact just to match
   existing code.
+- **Always LF line endings**, also on Windows (enforced by `.gitattributes`). Never write CRLF.
 - Do not commit or push unless asked.
 - Caddy is the source of truth; never leave it with an invalid config (validate with `/adapt` before `/load`).
 - Keep `docs/PLAN.md` updated when a design decision changes.
