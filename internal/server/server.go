@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,13 +29,26 @@ type Options struct {
 	ShowSecrets bool
 	// Logger receives operational logs. A nil Logger discards them.
 	Logger *slog.Logger
+	// AccessLogPath is the file followed by /api/logs/stream. When empty, the file is discovered from the
+	// running Caddy configuration.
+	AccessLogPath string
+	// MaxStreams caps the concurrent log streams. Zero means 8.
+	MaxStreams int
+	// HeartbeatInterval is how often an idle log stream sends a ping comment. Zero means 15 seconds.
+	HeartbeatInterval time.Duration
+	// LogPollInterval is how often the log file is checked for new lines. Zero means the tailer's default.
+	LogPollInterval time.Duration
 }
 
 type api struct {
 	caddy Caddy
 	opts  Options
 	log   *slog.Logger
+	// streams holds one token per open log stream.
+	streams chan struct{}
 }
+
+var errNoAccessLog = errors.New("no access log found: configure a JSON file logger in Caddy or pass --access-log")
 
 // New returns the read-only API handler. It only serves GET, and only to loopback Host names.
 func New(c Caddy, opts Options) http.Handler {
@@ -42,11 +56,16 @@ func New(c Caddy, opts Options) http.Handler {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	a := &api{caddy: c, opts: opts, log: log}
+	maxStreams := opts.MaxStreams
+	if maxStreams <= 0 {
+		maxStreams = defaultMaxStreams
+	}
+	a := &api{caddy: c, opts: opts, log: log, streams: make(chan struct{}, maxStreams)}
 	routes := map[string]http.HandlerFunc{
-		"/api/status": a.status,
-		"/api/config": a.config,
-		"/api/sites":  a.sites,
+		"/api/status":      a.status,
+		"/api/config":      a.config,
+		"/api/sites":       a.sites,
+		"/api/logs/stream": a.logStream,
 	}
 	return a.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()

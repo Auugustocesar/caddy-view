@@ -247,7 +247,7 @@ func TestSites(t *testing.T) {
 }
 
 func TestEveryRouteIsReadOnly(t *testing.T) {
-	for _, path := range []string{"/api/status", "/api/config", "/api/sites"} {
+	for _, path := range []string{"/api/status", "/api/config", "/api/sites", "/api/logs/stream"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
 			t.Run(method+" "+path, func(t *testing.T) {
 				f := &fakeCaddy{cfg: parse(t, `{}`)}

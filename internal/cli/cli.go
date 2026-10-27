@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
@@ -80,6 +81,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	listen := fs.String("listen", "127.0.0.1:8484", "address to listen on; loopback only until the UI has authentication")
 	showSecrets := fs.Bool("show-secrets", false, "do not redact passwords, tokens and other secrets in /api/config")
 	logLevel := fs.String("log-level", "info", "log verbosity: debug, info, warn or error")
+	accessLog := fs.String("access-log", "", "JSON access log file to stream; default: found from the Caddy configuration")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -96,6 +98,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "invalid --log-level %q: use debug, info, warn or error\n", *logLevel)
 		return 2
 	}
+	if info, err := os.Stat(*accessLog); *accessLog != "" && err == nil && info.IsDir() {
+		fmt.Fprintf(stderr, "invalid --access-log: %s is a directory, not a file\n", *accessLog)
+		return 2
+	}
 	client, err := caddy.New(*admin)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid --admin: %v\n", err)
@@ -106,7 +112,12 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "warning: --show-secrets is on, /api/config returns secrets in clear text")
 	}
 	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
-	handler := server.New(client, server.Options{Endpoint: client.Endpoint(), ShowSecrets: *showSecrets, Logger: logger})
+	handler := server.New(client, server.Options{
+		Endpoint:      client.Endpoint(),
+		ShowSecrets:   *showSecrets,
+		Logger:        logger,
+		AccessLogPath: *accessLog,
+	})
 	onListen := func(addr net.Addr) {
 		fmt.Fprintf(stdout, "caddy-view listening on http://%s (Admin API: %s)\n", addr, client.Endpoint())
 	}
