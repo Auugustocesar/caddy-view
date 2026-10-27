@@ -41,8 +41,8 @@ func ValidateListen(addr string) error {
 }
 
 // Serve listens on addr (which must pass ValidateListen), serves h, and returns nil after a graceful shutdown
-// triggered by ctx. Requests in flight are allowed to finish. onListen, when not nil, receives the bound address
-// once the listener is ready, which matters when the port is 0.
+// triggered by ctx. Requests in flight are allowed to finish, except long-lived ones, whose context is cancelled.
+// onListen, when not nil, receives the bound address once the listener is ready, which matters when the port is 0.
 func Serve(ctx context.Context, addr string, h http.Handler, onListen func(net.Addr)) error {
 	if err := ValidateListen(addr); err != nil {
 		return err
@@ -55,7 +55,15 @@ func Serve(ctx context.Context, addr string, h http.Handler, onListen func(net.A
 		onListen(ln.Addr())
 	}
 
-	srv := &http.Server{Handler: h, ReadHeaderTimeout: readHeaderTimeout}
+	// Requests share a context that ends when the shutdown starts, so long-lived responses (the log stream) stop
+	// instead of holding the shutdown until its timeout.
+	requests, endRequests := context.WithCancel(context.Background())
+	defer endRequests()
+	srv := &http.Server{
+		Handler:           h,
+		ReadHeaderTimeout: readHeaderTimeout,
+		BaseContext:       func(net.Listener) context.Context { return requests },
+	}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve(ln) }()
 
@@ -65,6 +73,7 @@ func Serve(ctx context.Context, addr string, h http.Handler, onListen func(net.A
 	case <-ctx.Done():
 	}
 
+	endRequests()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {

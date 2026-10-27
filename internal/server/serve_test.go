@@ -212,3 +212,30 @@ func TestServeWorksWithoutOnListen(t *testing.T) {
 		t.Errorf("Serve = %v, want nil", err)
 	}
 }
+
+// A long-lived response, such as the log stream, must not hold up the shutdown until the timeout.
+func TestServeEndsLongLivedRequestsOnShutdown(t *testing.T) {
+	started := make(chan struct{})
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	})
+	base, cancel, done := startServe(t, h)
+
+	go func() {
+		if resp, err := http.Get(base + "/stream"); err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-started
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Serve returned %v, want nil after ending the open request", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the open request kept the server from shutting down")
+	}
+}
