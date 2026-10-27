@@ -89,6 +89,7 @@ type history interface {
 	ingest.Store
 	scrape.Store
 	retain.Store
+	server.History
 	io.Closer
 }
 
@@ -175,6 +176,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		Logger:        logger,
 		AccessLogPath: *accessLog,
 		UI:            web.Handler(),
+		History:       hist,
 	})
 	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.
 	stopIngest := startIngest(ctx, hist, client, *accessLog, *storeQuery, logger)

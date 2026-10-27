@@ -35,6 +35,10 @@ type Options struct {
 	// AccessLogPath is the file followed by /api/logs/stream. When empty, the file is discovered from the
 	// running Caddy configuration.
 	AccessLogPath string
+	// History serves /api/logs, /api/traffic and /api/summary. When nil, those routes are a 404.
+	History History
+	// Now gives the current time for the history routes. Zero means time.Now.
+	Now func() time.Time
 	// MaxStreams caps the concurrent log streams. Zero means 8.
 	MaxStreams int
 	// HeartbeatInterval is how often an idle log stream sends a ping comment. Zero means 15 seconds.
@@ -69,6 +73,11 @@ func New(c Caddy, opts Options) http.Handler {
 		"/api/config":      a.config,
 		"/api/sites":       a.sites,
 		"/api/logs/stream": a.logStream,
+	}
+	if opts.History != nil {
+		routes["/api/logs"] = a.logs
+		routes["/api/traffic"] = a.traffic
+		routes["/api/summary"] = a.summary
 	}
 	return a.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !loopbackHost(r.Host) {

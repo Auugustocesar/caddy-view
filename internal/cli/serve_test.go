@@ -570,3 +570,56 @@ func TestServePrunesDataPastItsRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestServeAnswersHistoryQueriesFromTheStore(t *testing.T) {
+	logFile := filepath.Join(t.TempDir(), "access.log")
+	if err := os.WriteFile(logFile, []byte(accessLine()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	admin := fakeAdmin(t, goodConfig)
+	base, stop, _, _ := startServe(t, "--admin", admin.URL, "--access-log", logFile) // in memory: no --data-dir
+	defer stop()
+
+	// The entry arrives through ingestion, so ask until the API shows it.
+	var answer struct {
+		Entries []struct {
+			Host string `json:"host"`
+			Path string `json:"path"`
+		} `json:"entries"`
+	}
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for len(answer.Entries) == 0 {
+		select {
+		case <-tick.C:
+			res, err := http.Get(base + "/api/logs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("GET /api/logs = %d, want 200", res.StatusCode)
+			}
+			if err := json.NewDecoder(res.Body).Decode(&answer); err != nil {
+				t.Fatal(err)
+			}
+			res.Body.Close()
+		case <-deadline:
+			t.Fatal("the ingested entry never showed up in /api/logs")
+		}
+	}
+	if answer.Entries[0].Host != "app.example.com" || answer.Entries[0].Path != "/ingested" {
+		t.Errorf("entry = %+v, want the ingested one", answer.Entries[0])
+	}
+
+	for _, path := range []string{"/api/traffic", "/api/summary"} {
+		res, err := http.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, res.StatusCode)
+		}
+	}
+}

@@ -168,6 +168,36 @@ aggregated while scraping.
 - **Memory store.** `--no-persist` applies the same retention. Its size is an estimate of the bytes held, enough for
   the cap to bound memory.
 
+## History API (slice 2e, part 1)
+
+The server gets one new dependency, `Options.History`, an interface of the three read methods it needs
+(`QueryLogs`, `QueryTraffic`, `QueryMetrics`). Without it the three routes below are a 404, as before. `Options.Now`
+makes time testable. Every route is GET only, behind the same Host check, with JSON errors as `{"error": "..."}`.
+A malformed parameter is a 400 that names it; a store failure is a 500 with a generic message, the cause goes to the
+log.
+
+- **`GET /api/logs`**: `limit`, `before` (an entry ID, to page backwards), `host`, `minStatus`, `maxStatus`, `q`
+  (literal, case-insensitive text in the path) and `from` / `to` (RFC 3339). Answers
+  `{"entries": [...], "next": ID | null}`, newest first; an entry is `id`, `time`, `host`, `method`, `path`,
+  `status`, `durationMs`, `bytes`, `clientIp`. `next` is set when the page is full, and is the `before` of the next
+  page.
+- **`GET /api/traffic`**: `resolution` (`minute`, the default, or `hour`), `from` and `to` (RFC 3339, default the
+  last hour for minutes and the last 24 hours for hours, ending now) and an optional `host`. Answers one bucket for
+  every step of the range, empty ones included so a chart needs no gap filling: `start`, `requests`, `bytes`,
+  `status` (counts for `1xx` to `5xx` and `other`), `avgMs`, `p95Ms` and `maxMs` (the three are `null` without
+  requests). The range may hold at most 3,000 buckets. `p95Ms` is the upper bound of the latency bucket holding the
+  95th percentile.
+- **`GET /api/summary`**: `window` (`5m`, `1h` default, `6h`, `24h`, `7d`). One object for the dashboard tiles:
+  `requests`, `requestsPerSecond` (over the whole window), `errors5xx`, `errorRate` (a fraction), `avgMs`, `p95Ms`,
+  `bytes`, `status` as above, `inFlight` and `upstreams` (`healthy` and `total`). Windows up to 6 hours are read from
+  the minute rollups, longer ones from the hour rollups; the bucket that contains the start of the window counts
+  whole, so a summary can include up to one bucket of older traffic. `errorRate`, `avgMs` and `p95Ms` are `null`
+  without requests. `inFlight` and `upstreams` come from the newest metric sample of each series within the last two
+  minutes, and are `null` when the scraper has stored nothing that recent.
+
+Slice 2e is built in two steps: this API first, then the interface (history tab, dashboard tiles and charts, the
+design pass), so the interface is written against an API that already exists and is tested.
+
 ## Slices
 
 | Slice | Deliverable | Done when |
@@ -176,7 +206,7 @@ aggregated while scraping.
 | 2b | `internal/ingest`: cursor-based log reader feeding the store (resumable `logtail` core, batching, query-string stripping, invalid lines counted) | Restarts, rotation, truncation, partial lines and failing batches never repeat or lose a line |
 | 2c | `internal/promtext` (a small Prometheus text parser) and the scraper with counter deltas | Deltas, counter resets and a missing `metrics` option are handled; samples are stored |
 | 2d | Rollups, retention, size cap | Rollups match the raw entries; retention and the cap delete the right rows |
-| 2e | API (`/api/logs`, `/api/traffic`, `/api/summary`), history search tab, dashboard summary and charts, design pass | Go and JavaScript tests pass; the UI shows history after a restart |
+| 2e | Part 1: API (`/api/logs`, `/api/traffic`, `/api/summary`). Part 2: history search tab, dashboard summary and charts, design pass | Go and JavaScript tests pass; the UI shows history after a restart |
 | 2f | Check against the test Caddy over a few days of real traffic, including a real log rotation | Numbers in the UI match the log file; nothing repeats or disappears across a restart and a rotation |
 
 ## Open questions
