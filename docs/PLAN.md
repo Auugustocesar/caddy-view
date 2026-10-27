@@ -3,7 +3,7 @@
 A lightweight web UI that runs next to [Caddy](https://caddyserver.com): see status, metrics and logs, edit the
 Caddyfile safely, and manage reverse proxies.
 
-Status: phase 0 in progress (Admin API client and `doctor` command done, CI pending). This document is the source
+Status: phase 0 complete (Admin API client, `doctor` command and CI); phase 1 is next. This document is the source
 of truth for scope and design; update it when a decision changes.
 
 ## 1. Scope
@@ -190,7 +190,8 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 | 4 | Sites wizard and rollup charts | Creating a reverse proxy from the UI works |
 | 5 | Full login, release, Docker, docs | Fresh-machine install takes minutes |
 
-MVP is phases 0 to 3.
+MVP is phases 0 to 3. Phase 0 is complete: CI runs gofmt, vet and race tests on Linux, macOS and Windows, and
+`doctor` was verified against a real Caddy 2.11.
 
 ## 13. Risks
 

@@ -1,10 +1,12 @@
 # caddy-view
 
+[![CI](https://github.com/Auugustocesar/caddy-view/actions/workflows/ci.yml/badge.svg)](https://github.com/Auugustocesar/caddy-view/actions/workflows/ci.yml)
+
 A lightweight web UI that runs next to [Caddy](https://caddyserver.com): dashboard, metrics, logs, Caddyfile
 editor with validation and rollback, and a reverse proxy wizard.
 
-> **Status: early development.** Only the `doctor` command exists today. The web UI is not built yet.
-> See [docs/PLAN.md](docs/PLAN.md) for the full design and roadmap.
+> **Status: early development.** The foundation is done (Admin API client, `doctor` command, CI on Linux, macOS
+> and Windows). The web UI is not built yet. See [docs/PLAN.md](docs/PLAN.md) for the full design and roadmap.
 
 ## Goals
 
@@ -50,15 +52,21 @@ Flags:
 
 Exit codes: `0` when no check failed (warnings do not fail the run), `1` when a check failed, `2` on a usage error.
 
-## Build
+## Install
 
 Requires Go 1.26 or newer.
+
+```sh
+go install github.com/Auugustocesar/caddy-view/cmd/caddy-view@latest
+caddy-view doctor --admin localhost:2019
+```
+
+Or build from a clone:
 
 ```sh
 git clone https://github.com/Auugustocesar/caddy-view.git
 cd caddy-view
 go build -o caddy-view ./cmd/caddy-view
-./caddy-view doctor --admin localhost:2019
 ```
 
 ## Development
@@ -76,7 +84,7 @@ gofmt -l .
 
 | Phase | Deliverable | State |
 |---|---|---|
-| 0 | Repo, structure, `doctor`, CI | `doctor` done, CI pending |
+| 0 | Repo, structure, `doctor`, CI | Done |
 | 1 | Read-only UI: dashboard, config, live logs | Planned |
 | 2 | SQLite, log ingestion, metrics history | Planned |
 | 3 | Caddyfile editing with validation and rollback | Planned |
