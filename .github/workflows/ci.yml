@@ -4,11 +4,35 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly, because new vulnerabilities in the Go standard library show up without any change in this repository.
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
 
 jobs:
+  lint:
+    name: lint and vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          # No go.sum yet (no external dependencies); turn caching on when the first one is added.
+          cache: false
+
+      - name: go mod tidy
+        run: go mod tidy -diff
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -25,12 +49,11 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # No go.sum yet (no external dependencies); turn caching on when the first one is added.
           cache: false
 
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l .)"
+          unformatted="$(gofmt -s -l .)"
           if [ -n "$unformatted" ]; then
             echo "These files are not gofmt-formatted:"
             echo "$unformatted"
@@ -41,4 +64,4 @@ jobs:
         run: go vet ./...
 
       - name: go test
-        run: go test -race -count=1 ./...
+        run: go test -race -count=1 -shuffle=on ./...

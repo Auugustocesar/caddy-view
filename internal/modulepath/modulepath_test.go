@@ -1,10 +1,13 @@
-// Package modulepath guards the Go module path, so `go install` from the public repository keeps working.
+// Package modulepath guards repository-level invariants that are easy to break by accident: the module path (so
+// `go install` from the public repository keeps working), a patched Go release in go.mod, and the quality gates
+// in CI.
 package modulepath
 
 import (
 	"bufio"
 	"go/parser"
 	"go/token"
+	"go/version"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,7 +18,47 @@ import (
 
 const wantModule = "github.com/Auugustocesar/caddy-view"
 
+// minGo is the oldest Go release without known standard library vulnerabilities that this code reaches
+// (govulncheck, 2026-10-27). Raise it when govulncheck reports newer fixes.
+const minGo = "go1.26.10"
+
 const repoRoot = "../.."
+
+func TestGoDirectiveIsPatched(t *testing.T) {
+	f, err := os.Open(filepath.Join(repoRoot, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	var got string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(sc.Text()), "go "); ok {
+			got = "go" + strings.TrimSpace(rest)
+			break
+		}
+	}
+	if !version.IsValid(got) {
+		t.Fatalf("go.mod has no valid go directive (found %q)", got)
+	}
+	if version.Compare(got, minGo) < 0 {
+		t.Errorf("go.mod requires %s, want at least %s (older releases have known vulnerabilities)", got, minGo)
+	}
+}
+
+func TestCIRunsTheQualityGates(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+	for _, gate := range []string{"staticcheck", "govulncheck", "go mod tidy -diff", "go vet", "-race", "-shuffle=on", "schedule:"} {
+		if !strings.Contains(workflow, gate) {
+			t.Errorf("ci.yml does not run or mention %q", gate)
+		}
+	}
+}
 
 func TestModuleDeclaration(t *testing.T) {
 	f, err := os.Open(filepath.Join(repoRoot, "go.mod"))
