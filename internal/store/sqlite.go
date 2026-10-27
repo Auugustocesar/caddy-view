@@ -21,7 +21,7 @@ import (
 )
 
 // LatestSchemaVersion is the number of the last migration this version of caddy-view knows.
-const LatestSchemaVersion = 1
+const LatestSchemaVersion = 2
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -343,4 +343,131 @@ func (s *SQLite) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+// AppendMetrics stores the samples atomically. A sample without a name or a time rejects the whole batch.
+func (s *SQLite) AppendMetrics(ctx context.Context, samples []MetricSample) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateMetrics(samples); err != nil {
+		return err
+	}
+	if s.closed.Load() {
+		return ErrClosed
+	}
+	if len(samples) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("append metrics: %w", err)
+	}
+	defer tx.Rollback() // after a successful Commit this does nothing
+
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO metric_samples (name, labels, ts, value, raw) VALUES (?, ?, ?, ?, ?)")
+	if err != nil {
+		return fmt.Errorf("append metrics: %w", err)
+	}
+	defer stmt.Close()
+	for _, sample := range samples {
+		if _, err := stmt.ExecContext(ctx, sample.Name, sample.Labels, sample.Time.UnixMilli(), sample.Value, sample.Raw); err != nil {
+			return fmt.Errorf("append metrics: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("append metrics: %w", err)
+	}
+	return nil
+}
+
+// QueryMetrics returns the samples of one series selection, oldest first.
+func (s *SQLite) QueryMetrics(ctx context.Context, q MetricQuery) ([]MetricSample, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	limit, err := metricLimit(q)
+	if err != nil {
+		return nil, err
+	}
+	if s.closed.Load() {
+		return nil, ErrClosed
+	}
+
+	query := "SELECT name, labels, ts, value, raw FROM metric_samples WHERE name = ?"
+	args := []any{q.Name}
+	if q.Labels != "" {
+		query += " AND labels = ?"
+		args = append(args, q.Labels)
+	}
+	if !q.From.IsZero() {
+		query += " AND ts >= ?"
+		args = append(args, q.From.UnixMilli())
+	}
+	if !q.To.IsZero() {
+		query += " AND ts < ?"
+		args = append(args, q.To.UnixMilli())
+	}
+	query += " ORDER BY ts, id LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query metrics: %w", err)
+	}
+	defer rows.Close()
+	out := []MetricSample{}
+	for rows.Next() {
+		sample, err := scanMetric(rows)
+		if err != nil {
+			return nil, fmt.Errorf("query metrics: %w", err)
+		}
+		out = append(out, sample)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("query metrics: %w", err)
+	}
+	return out, nil
+}
+
+// LastMetrics returns the most recently stored sample of every series, keyed by name followed by labels.
+func (s *SQLite) LastMetrics(ctx context.Context) (map[string]MetricSample, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.closed.Load() {
+		return nil, ErrClosed
+	}
+	// The distinct series come from the index alone; each one then looks up its newest row through the same index.
+	rows, err := s.db.QueryContext(ctx, `SELECT m.name, m.labels, m.ts, m.value, m.raw
+		FROM (SELECT DISTINCT name, labels FROM metric_samples) AS series
+		JOIN metric_samples AS m ON m.id = (
+			SELECT id FROM metric_samples WHERE name = series.name AND labels = series.labels
+			ORDER BY ts DESC, id DESC LIMIT 1)`)
+	if err != nil {
+		return nil, fmt.Errorf("last metrics: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]MetricSample)
+	for rows.Next() {
+		sample, err := scanMetric(rows)
+		if err != nil {
+			return nil, fmt.Errorf("last metrics: %w", err)
+		}
+		out[sample.Name+sample.Labels] = sample
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("last metrics: %w", err)
+	}
+	return out, nil
+}
+
+func scanMetric(rows *sql.Rows) (MetricSample, error) {
+	var sample MetricSample
+	var ts int64
+	if err := rows.Scan(&sample.Name, &sample.Labels, &ts, &sample.Value, &sample.Raw); err != nil {
+		return MetricSample{}, err
+	}
+	sample.Time = time.UnixMilli(ts).UTC()
+	return sample, nil
 }

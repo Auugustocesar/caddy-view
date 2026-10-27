@@ -78,3 +78,31 @@ type LogQuery struct {
 	// Limit is the maximum number of entries. Zero means DefaultLimit, and values above MaxLimit are capped.
 	Limit int
 }
+
+// MaxMetricLimit caps the samples QueryMetrics returns in one call, and is the default.
+const MaxMetricLimit = 10000
+
+// MetricSample is one stored reading of a metric series.
+//
+// A series is a Name plus its Labels, a canonical string such as {server="srv0"} that the store treats as opaque.
+// For a counter, Value is the increase since the previous sample and Raw is the counter itself; for a gauge both
+// are the reading.
+type MetricSample struct {
+	Name   string
+	Labels string
+	Time   time.Time
+	Value  float64
+	Raw    float64
+}
+
+// MetricQuery selects stored samples. The zero value selects every sample, up to MaxMetricLimit.
+type MetricQuery struct {
+	// Name is the metric name to select. It is required.
+	Name string
+	// Labels, when not empty, matches the canonical label string exactly.
+	Labels string
+	// From and To bound the time as [From, To). A zero value leaves that side open.
+	From, To time.Time
+	// Limit is the maximum number of samples. Zero means MaxMetricLimit, and larger values are capped.
+	Limit int
+}

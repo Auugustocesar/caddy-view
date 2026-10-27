@@ -16,6 +16,7 @@ import (
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
 	"github.com/Auugustocesar/caddy-view/internal/ingest"
+	"github.com/Auugustocesar/caddy-view/internal/scrape"
 	"github.com/Auugustocesar/caddy-view/internal/server"
 	"github.com/Auugustocesar/caddy-view/internal/store"
 	"github.com/Auugustocesar/caddy-view/internal/web"
@@ -81,9 +82,10 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return doctor.ExitCode(results)
 }
 
-// history is the store behind the UI: ingestion writes to it and the API reads from it.
+// history is the store behind the UI: ingestion and the metrics scraper write to it and the API reads from it.
 type history interface {
 	ingest.Store
+	scrape.Store
 	io.Closer
 }
 
@@ -165,6 +167,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.
 	stopIngest := startIngest(ctx, hist, client, *accessLog, *storeQuery, logger)
 	defer stopIngest()
+	stopScrape := startScrape(ctx, hist, client, logger)
+	defer stopScrape()
 
 	onListen := func(addr net.Addr) {
 		fmt.Fprintf(stdout, "caddy-view listening on http://%s (Admin API: %s)\n", addr, client.Endpoint())
@@ -180,14 +184,25 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 // discoverEvery is how often serve looks again for an access log while Caddy has none configured or cannot be reached.
 const discoverEvery = 30 * time.Second
 
-// startIngest copies the access log into the history in the background and returns a function that stops it and
-// waits for it to finish. The file is the one given with --access-log, otherwise the first JSON file log of the
-// running Caddy configuration, which is looked up again until one appears.
-func startIngest(ctx context.Context, h ingest.Store, client *caddy.Client, accessLog string, keepQuery bool, logger *slog.Logger) (stop func()) {
+// background runs fn in its own goroutine and returns a function that cancels its context and waits for it to end.
+func background(ctx context.Context, fn func(ctx context.Context)) (stop func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		fn(ctx)
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// startIngest copies the access log into the history in the background and returns a function that stops it and
+// waits for it to finish. The file is the one given with --access-log, otherwise the first JSON file log of the
+// running Caddy configuration, which is looked up again until one appears.
+func startIngest(ctx context.Context, h ingest.Store, client *caddy.Client, accessLog string, keepQuery bool, logger *slog.Logger) (stop func()) {
+	return background(ctx, func(ctx context.Context) {
 		path := accessLog
 		for path == "" {
 			path = discoverAccessLog(ctx, client, logger)
@@ -203,11 +218,16 @@ func startIngest(ctx context.Context, h ingest.Store, client *caddy.Client, acce
 		logger.Info("ingesting the access log into the history", "path", path)
 		// Run only returns nil, after the context is cancelled.
 		_ = ingest.New(h, ingest.Options{Path: path, KeepQuery: keepQuery, Logger: logger}).Run(ctx)
-	}()
-	return func() {
-		cancel()
-		<-done
-	}
+	})
+}
+
+// startScrape copies Caddy's metrics into the history in the background and returns a function that stops it and
+// waits for it to finish.
+func startScrape(ctx context.Context, h scrape.Store, client *caddy.Client, logger *slog.Logger) (stop func()) {
+	return background(ctx, func(ctx context.Context) {
+		// Run only returns nil, after the context is cancelled.
+		_ = scrape.New(client, h, scrape.Options{Logger: logger}).Run(ctx)
+	})
 }
 
 // discoverAccessLog returns the first JSON file log of the running configuration, or "" when there is none.

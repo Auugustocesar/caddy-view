@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -447,5 +449,49 @@ func TestServeKeepsTheQueryStringOnRequest(t *testing.T) {
 		case <-deadline:
 			t.Fatal("the access log was not ingested")
 		}
+	}
+}
+
+func TestServeScrapesTheMetricsIntoTheHistory(t *testing.T) {
+	dir := t.TempDir()
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/config/":
+			io.WriteString(w, goodConfig)
+		case "/metrics":
+			io.WriteString(w, "# TYPE caddy_http_requests_in_flight gauge\n"+`caddy_http_requests_in_flight{handler="subroute",server="srv0"} 3`+"\n")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(admin.Close)
+	_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir)
+
+	reader, err := store.OpenSQLite(context.Background(), filepath.Join(dir, "caddy-view.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	var got []store.MetricSample
+	deadline := time.After(10 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for len(got) == 0 {
+		select {
+		case <-tick.C:
+			got, err = reader.QueryMetrics(context.Background(), store.MetricQuery{Name: "caddy_http_requests_in_flight"})
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-deadline:
+			t.Fatal("the metrics were not scraped")
+		}
+	}
+	if got[0].Labels != `{server="srv0"}` || got[0].Value != 3 {
+		t.Errorf("stored sample = %+v, want value 3 for server srv0", got[0])
+	}
+	if code := stop(); code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
 	}
 }

@@ -32,6 +32,36 @@ func TestSQLiteStoreMeetsTheContract(t *testing.T) {
 	})
 }
 
+func TestMemoryStoreMeetsTheMetricsContract(t *testing.T) {
+	storetest.RunMetrics(t, func(t *testing.T) storetest.MetricStore { return store.NewMemory() })
+}
+
+func TestSQLiteStoreMeetsTheMetricsContract(t *testing.T) {
+	storetest.RunMetrics(t, func(t *testing.T) storetest.MetricStore {
+		s, err := store.OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "caddy-view.db"))
+		if err != nil {
+			t.Fatalf("OpenSQLite: %v", err)
+		}
+		return s
+	})
+}
+
+func TestSQLiteKeepsMetricsAcrossAReopen(t *testing.T) {
+	path := dbPath(t)
+	ctx := context.Background()
+	first := open(t, path)
+	err := first.AppendMetrics(ctx, []store.MetricSample{{Name: "caddy_http_requests_total", Labels: `{server="srv0"}`, Time: base, Value: 3, Raw: 30}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+
+	last, err := open(t, path).LastMetrics(ctx)
+	if err != nil || last[`caddy_http_requests_total{server="srv0"}`].Raw != 30 {
+		t.Errorf("LastMetrics after a reopen = %v, %v, want the stored raw value 30", last, err)
+	}
+}
+
 func dbPath(t *testing.T) string {
 	t.Helper()
 	// The directory does not exist yet: OpenSQLite creates it.

@@ -44,6 +44,38 @@ func queryLimit(q LogQuery) (int, error) {
 	return q.Limit, nil
 }
 
+// validateMetrics checks every sample before anything is written, so a bad sample rejects the whole batch.
+func validateMetrics(samples []MetricSample) error {
+	for i, s := range samples {
+		switch {
+		case s.Name == "":
+			return fmt.Errorf("%w: metric sample %d has no name", ErrInvalidEntry, i)
+		case s.Time.IsZero():
+			return fmt.Errorf("%w: metric sample %d has no time", ErrInvalidEntry, i)
+		}
+	}
+	return nil
+}
+
+// normalizeMetric rounds the time of a sample to the precision the stores keep.
+func normalizeMetric(s MetricSample) MetricSample {
+	s.Time = time.UnixMilli(s.Time.UnixMilli()).UTC()
+	return s
+}
+
+// metricLimit checks a metric query and applies the default and the cap to its limit.
+func metricLimit(q MetricQuery) (int, error) {
+	switch {
+	case q.Name == "":
+		return 0, fmt.Errorf("%w: no metric name", ErrInvalidQuery)
+	case q.Limit < 0:
+		return 0, fmt.Errorf("%w: negative limit %d", ErrInvalidQuery, q.Limit)
+	case q.Limit == 0 || q.Limit > MaxMetricLimit:
+		return MaxMetricLimit, nil
+	}
+	return q.Limit, nil
+}
+
 // asciiLower folds ASCII letters only. SQLite's lower() does the same, and both stores must agree.
 func asciiLower(s string) string {
 	b := []byte(s)

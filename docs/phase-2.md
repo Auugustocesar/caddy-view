@@ -45,7 +45,7 @@ Everything here is built tests first (see `docs/PLAN.md`, section 11).
   are fingerprinted, so a file replaced in place is noticed too. A file smaller than the stored offset is a
   truncation. In all three cases the new file is read from its start, and the gap is recorded on the cursor.
 - **Counters restart.** A sample lower than the previous raw value means Caddy restarted, and counting starts again
-  from the new value (Prometheus semantics). The first sample after a start has no delta.
+  from the new value (Prometheus semantics). Details are in the metrics section.
 - **Retention is automatic and configurable.** Raw log entries 14 days, hourly rollups 90 days, a 1 GiB cap on the
   database file. When the cap is exceeded the oldest raw entries are deleted in batches until it fits. The settings
   are flags (`--retain-logs`, `--retain-rollups`, `--max-db-size`).
@@ -106,6 +106,40 @@ a file from "now" and keeps no position, while ingestion must resume from a stor
   store, which the UI reads the same way), for the log file found at startup: the `--access-log` flag, otherwise the
   first file from the Caddy configuration. Without a log file nothing is ingested and the doctor already says why.
 
+## Metrics (slice 2c)
+
+`internal/promtext` parses the Prometheus text format; `internal/scrape` turns Caddy's `/metrics` into stored samples.
+Looking at the real output of the test Caddy settled the open question about label cardinality: 733 lines, of
+which 554 are `caddy_http_*` histogram series split by `server`, `handler`, `code` and `method`. Storing every
+label set would be thousands of rows per scrape for charts that need a few lines, so a fixed set is kept and
+aggregated while scraping.
+
+| Series stored | Kind | Labels kept |
+|---|---|---|
+| `caddy_http_requests_total` | counter | `server` |
+| `caddy_http_request_duration_seconds_count`, `..._sum` | counter | `server`, `code` as a class (`1xx` to `5xx`, else `other`) |
+| `caddy_http_requests_in_flight` | gauge | `server` |
+| `caddy_reverse_proxy_upstreams_healthy` | gauge | `upstream` |
+| `caddy_config_last_reload_successful` | gauge | none |
+
+- **Counters are stored as increases.** A `MetricSample` has `Value` (the increase since the previous sample, or the
+  reading for a gauge) and `Raw` (the counter itself). Counters are summed over the labels that are dropped before
+  the increase is computed. The increase is `raw - previous`, and when the raw value went down, Caddy restarted and
+  the increase is the new raw value (Prometheus semantics).
+- **Baselines.** The very first scrape against an empty store has nothing to compare with, so counters get an increase
+  of 0 and only record `Raw`. After that a series seen for the first time (a new server, the first 5xx) counts from
+  zero: all it has counted is new. After a restart of caddy-view the previous raw values come from the store
+  (`LastMetrics`), so counting continues instead of starting over.
+- **A failed write moves nothing.** The previous raw values only advance after the samples are stored, so a lost
+  scrape is not forgotten: the next increase covers both intervals.
+- **Not stored:** NaN and infinite values, and every series outside the table. Caddy without the `metrics` option
+  yields no `caddy_*` lines; that is not an error, the doctor already says why.
+- **Store.** `AppendMetrics` (atomic), `QueryMetrics` (by name, optional exact label string, `[From, To)`, oldest
+  first, at most `MaxMetricLimit` = 10,000 samples) and `LastMetrics` (newest by time per series). The SQLite table
+  is `metric_samples` (migration 2) with an index on name, labels and time. Labels are one canonical string from
+  `promtext.FormatLabels`, which the store treats as opaque.
+- **Wiring.** `serve` runs one scraper every 15 s against the same Admin API client, into the same store.
+
 ## Slices
 
 | Slice | Deliverable | Done when |
@@ -122,5 +156,4 @@ a file from "now" and keeps no position, while ingestion must resume from a stor
 - **Charts library.** `docs/PLAN.md` names uPlot (small, fast, no framework). Slice 2e confirms it by checking its
   size and licence before adding the dependency, and keeps the markup accessible (a table alternative for each
   chart).
-- **Metrics label cardinality.** Caddy labels most series by `server` and `handler`. Slice 2c decides whether to store
-  every label set or only the ones the UI uses, after looking at real `/metrics` output.
+- **Metrics label cardinality.** Settled in slice 2c: a fixed set of aggregated series (see the metrics section).
