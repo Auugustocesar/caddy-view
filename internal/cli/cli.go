@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"time"
 
@@ -78,6 +79,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	admin := fs.String("admin", defaultAdmin, "Caddy Admin API address (unix:///path or http://host:port)")
 	listen := fs.String("listen", "127.0.0.1:8484", "address to listen on; loopback only until the UI has authentication")
 	showSecrets := fs.Bool("show-secrets", false, "do not redact passwords, tokens and other secrets in /api/config")
+	logLevel := fs.String("log-level", "info", "log verbosity: debug, info, warn or error")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -89,6 +91,11 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "invalid --listen: %v\n", err)
 		return 2
 	}
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(*logLevel)); err != nil {
+		fmt.Fprintf(stderr, "invalid --log-level %q: use debug, info, warn or error\n", *logLevel)
+		return 2
+	}
 	client, err := caddy.New(*admin)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid --admin: %v\n", err)
@@ -98,7 +105,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if *showSecrets {
 		fmt.Fprintln(stderr, "warning: --show-secrets is on, /api/config returns secrets in clear text")
 	}
-	handler := server.New(client, server.Options{Endpoint: client.Endpoint(), ShowSecrets: *showSecrets})
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
+	handler := server.New(client, server.Options{Endpoint: client.Endpoint(), ShowSecrets: *showSecrets, Logger: logger})
 	onListen := func(addr net.Addr) {
 		fmt.Fprintf(stdout, "caddy-view listening on http://%s (Admin API: %s)\n", addr, client.Endpoint())
 	}

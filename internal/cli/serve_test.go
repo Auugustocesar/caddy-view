@@ -230,3 +230,51 @@ func TestServeShowSecretsFlag(t *testing.T) {
 		t.Errorf("--show-secrets did not return the raw configuration: %s", body)
 	}
 }
+
+func TestServeRejectsAnInvalidLogLevel(t *testing.T) {
+	code, _, stderr := run(t, "serve", "--listen", "127.0.0.1:0", "--log-level", "nope")
+	if code != 2 {
+		t.Errorf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr, "invalid --log-level") || !strings.Contains(stderr, "nope") {
+		t.Errorf("stderr %q does not name the flag and the rejected value", stderr)
+	}
+}
+
+func TestServeLogsOperationalProblemsToStderr(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	down := l.Addr().String()
+	l.Close()
+
+	base, stop, _, stderr := startServe(t, "--admin", down)
+	defer stop()
+
+	resp, err := http.Get(base + "/api/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	for _, want := range []string{"level=WARN", "caddy request failed"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr %q does not contain %q", stderr.String(), want)
+		}
+	}
+}
+
+func TestServeLogLevelDebugShowsRequests(t *testing.T) {
+	admin := fakeAdmin(t, goodConfig)
+	base, stop, _, stderr := startServe(t, "--admin", admin.URL, "--log-level", "debug")
+	defer stop()
+
+	resp, err := http.Get(base + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if !strings.Contains(stderr.String(), "msg=request") {
+		t.Errorf("stderr %q does not show the request at debug level", stderr.String())
+	}
+}
