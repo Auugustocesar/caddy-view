@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -40,7 +44,7 @@ func startServe(t *testing.T, extraArgs ...string) (baseURL string, stop func() 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	args := append([]string{"serve", "--listen", "127.0.0.1:0"}, extraArgs...)
+	args := append([]string{"serve", "--listen", "127.0.0.1:0"}, withoutHistory(extraArgs)...)
 	done := make(chan int, 1)
 	go func() { done <- Run(ctx, args, stdout, stderr) }()
 
@@ -298,5 +302,70 @@ func TestServeServesTheUI(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+}
+
+// withoutHistory keeps tests from writing a database into the real user data directory: unless a test chooses where
+// the data goes, the history is kept in memory.
+func withoutHistory(args []string) []string {
+	for _, a := range args {
+		if a == "--no-persist" || a == "--data-dir" {
+			return args
+		}
+	}
+	return append([]string{"--no-persist"}, args...)
+}
+
+func TestServeStoresHistoryInTheDataDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	admin := fakeAdmin(t, goodConfig)
+	_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir)
+	defer stop()
+
+	info, err := os.Stat(filepath.Join(dir, "caddy-view.db"))
+	if err != nil {
+		t.Fatalf("the database was not created in the data directory: %v", err)
+	}
+	if info.IsDir() {
+		t.Error("caddy-view.db is a directory")
+	}
+}
+
+func TestServeNoPersistWritesNothing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "state")
+	admin := fakeAdmin(t, goodConfig)
+	_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir, "--no-persist")
+	defer stop()
+
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("--no-persist still created %s (stat error: %v)", dir, err)
+	}
+}
+
+func TestServeCannotUseADataDirThatIsAFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "afile")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := run(t, "serve", "--listen", "127.0.0.1:0", "--data-dir", file)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, file) {
+		t.Errorf("stderr %q does not name the data directory %s", stderr, file)
+	}
+	if strings.Contains(stdout, "listening") {
+		t.Errorf("stdout %q suggests the server started without its store", stdout)
+	}
+}
+
+func TestServeReopensTheSameHistory(t *testing.T) {
+	dir := t.TempDir()
+	admin := fakeAdmin(t, goodConfig)
+	for range 2 {
+		_, stop, _, _ := startServe(t, "--admin", admin.URL, "--data-dir", dir)
+		if code := stop(); code != 0 {
+			t.Fatalf("exit code = %d, want 0 (a second start must accept the existing database)", code)
+		}
 	}
 }

@@ -209,6 +209,6 @@ MVP is phases 0 to 3. Phase 0 is complete: CI runs gofmt, vet and race tests on 
 | Language | Go |
 | License | MIT |
 | Frontend | Svelte 5, plain JavaScript and CSS in phase 1 (no Tailwind yet); built assets committed so `go install` works |
-| Default storage | SQLite (memory store only for tests / `--no-persist`) |
+| Default storage | SQLite via `modernc.org/sqlite`, pure Go (memory store only for tests / `--no-persist`); see `docs/phase-2.md` |
 | Postgres | Out of scope; the `Store` interface keeps the door open |
 | Config backup | User-selectable: `full` or `sites-only` (section 5) |

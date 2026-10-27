@@ -10,11 +10,13 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
 	"github.com/Auugustocesar/caddy-view/internal/server"
+	"github.com/Auugustocesar/caddy-view/internal/store"
 	"github.com/Auugustocesar/caddy-view/internal/web"
 )
 
@@ -26,7 +28,10 @@ Commands:
   help     Show this help
 `
 
-const defaultAdmin = "http://localhost:2019"
+const (
+	defaultAdmin = "http://localhost:2019"
+	databaseFile = "caddy-view.db"
+)
 
 // Run executes the command line and returns the process exit code:
 // 0 success, 1 a check failed or the server could not run, 2 usage error.
@@ -75,6 +80,26 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return doctor.ExitCode(results)
 }
 
+// openHistory opens the store that keeps the history: in memory with --no-persist, otherwise the SQLite database in
+// the data directory. The directory is only touched when persisting.
+func openHistory(ctx context.Context, dataDir string, noPersist bool) (io.Closer, error) {
+	if noPersist {
+		return store.NewMemory(), nil
+	}
+	if dataDir == "" {
+		dir, err := store.DefaultDataDir()
+		if err != nil {
+			return nil, err
+		}
+		dataDir = dir
+	}
+	s, err := store.OpenSQLite(ctx, filepath.Join(dataDir, databaseFile))
+	if err != nil {
+		return nil, fmt.Errorf("open history in %s: %w", dataDir, err)
+	}
+	return s, nil
+}
+
 func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -83,6 +108,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	showSecrets := fs.Bool("show-secrets", false, "do not redact passwords, tokens and other secrets in /api/config")
 	logLevel := fs.String("log-level", "info", "log verbosity: debug, info, warn or error")
 	accessLog := fs.String("access-log", "", "JSON access log file to stream; default: found from the Caddy configuration")
+	dataDir := fs.String("data-dir", "", "directory for the history database; default: the user data directory")
+	noPersist := fs.Bool("no-persist", false, "keep the history in memory only, nothing is written to disk")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -108,6 +135,14 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintf(stderr, "invalid --admin: %v\n", err)
 		return 2
 	}
+
+	history, err := openHistory(ctx, *dataDir, *noPersist)
+	if err != nil {
+		fmt.Fprintf(stderr, "serve: %v\n", err)
+		return 1
+	}
+	// Ingestion (the next slice) reads and writes the history; for now it is opened and closed cleanly.
+	defer history.Close()
 
 	if *showSecrets {
 		fmt.Fprintln(stderr, "warning: --show-secrets is on, /api/config returns secrets in clear text")

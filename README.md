@@ -7,7 +7,7 @@ editor with validation and rollback, and a reverse proxy wizard.
 
 > **Status: early development.** The foundation and the read-only UI are done: Admin API client, `doctor`, `serve`
 > with a web UI (Dashboard, Config and live Logs) and CI on Linux, macOS and Windows. Editing comes in later phases.
-> See [docs/PLAN.md](docs/PLAN.md) for the full design and [docs/phase-1.md](docs/phase-1.md) for how phase 1 was built.
+> See [docs/PLAN.md](docs/PLAN.md) for the full design and [docs/phase-2.md](docs/phase-2.md) for what is next.
 
 ## Goals
 

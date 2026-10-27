@@ -33,5 +33,7 @@ Write and review code as a senior Go engineer would. Maintainability beats cleve
   synchronization, no assertions on incidental wording. Error paths are tested as carefully as happy paths.
 - **No duplication**: a helper needed in a second package moves to one shared place.
 - **Docs**: every exported identifier has a doc comment that starts with its name.
-- **Gates (all must be clean before a commit)**: `gofmt -s -l .`, `go vet ./...`, `go test ./...`, `go mod tidy -diff`.
-  CI also runs staticcheck and `govulncheck`. Keep the `go` directive on a patched Go release.
+- **Gates (all must be clean before a commit)**: `gofmt -s -l .`, `go vet ./...`, `go test -race ./...`,
+  `go mod tidy -diff`. CI also runs staticcheck and `govulncheck`. Keep the `go` directive on a patched Go release.
+- **`-race` needs cgo**: on Windows that means gcc (WinLibs is installed on the maintainer's PC, via winget
+  `BrechtSanders.WinLibs.POSIX.UCRT`). In a shell opened before the install, reload `PATH` and set `CGO_ENABLED=1`.

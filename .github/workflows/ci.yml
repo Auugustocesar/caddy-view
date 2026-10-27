@@ -21,8 +21,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          # No go.sum yet (no external dependencies); turn caching on when the first one is added.
-          cache: false
+          cache-dependency-path: go.sum
 
       - name: go mod tidy
         run: go mod tidy -diff
@@ -83,7 +82,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
 
       - name: gofmt
         run: |
