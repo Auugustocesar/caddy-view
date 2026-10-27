@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
-	"strings"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 )
@@ -67,12 +66,7 @@ func loopbackHost(hostport string) bool {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
 	}
-	host = strings.ToLower(strings.Trim(host, "[]"))
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return isLoopbackName(host)
 }
 
 func (a *api) status(w http.ResponseWriter, r *http.Request) {
