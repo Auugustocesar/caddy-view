@@ -20,11 +20,13 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          # No go.sum yet (no external dependencies); turn caching on when the first one is added.
+          cache: false
 
       - name: gofmt
         run: |
