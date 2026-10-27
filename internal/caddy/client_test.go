@@ -348,3 +348,94 @@ func TestUpstreams(t *testing.T) {
 		t.Errorf("Upstreams = %+v, want %+v", got, want)
 	}
 }
+
+func TestUnreachableKeepsTheUnderlyingCause(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	c, err := New(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Config(context.Background())
+	if !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("err = %v, want ErrUnreachable", err)
+	}
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) || opErr.Op != "dial" {
+		t.Errorf("the dial error is lost from the chain: %v", err)
+	}
+}
+
+func TestErrorMessages(t *testing.T) {
+	apiErr := &APIError{Status: http.StatusInternalServerError, Message: "boom"}
+	if got, want := apiErr.Error(), "caddy admin API returned 500: boom"; got != want {
+		t.Errorf("APIError.Error() = %q, want %q", got, want)
+	}
+	adaptErr := &AdaptError{Message: "Caddyfile:3: unrecognized directive: nope", Line: 3}
+	if got, want := adaptErr.Error(), "Caddyfile:3: unrecognized directive: nope"; got != want {
+		t.Errorf("AdaptError.Error() = %q, want %q", got, want)
+	}
+}
+
+func TestErrorMessageFallbacks(t *testing.T) {
+	t.Run("plain text body is used as the message", func(t *testing.T) {
+		c := newTCPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "gateway down", http.StatusBadGateway)
+		}))
+		_, err := c.Config(context.Background())
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Message != "gateway down" {
+			t.Fatalf("err = %v, want *APIError with message %q", err, "gateway down")
+		}
+	})
+	t.Run("empty body falls back to the status text", func(t *testing.T) {
+		c := newTCPClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		_, err := c.Config(context.Background())
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Message != "Service Unavailable" {
+			t.Fatalf("err = %v, want *APIError with message %q", err, "Service Unavailable")
+		}
+	})
+	t.Run("JSON body without an error field falls back to the raw body", func(t *testing.T) {
+		c := newTCPClient(t, jsonHandler(t, http.MethodGet, "/config/", http.StatusInternalServerError, `{"detail":"x"}`))
+		_, err := c.Config(context.Background())
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Message != `{"detail":"x"}` {
+			t.Fatalf("err = %v, want *APIError with the raw body as message", err)
+		}
+	})
+}
+
+func TestUpstreamsErrors(t *testing.T) {
+	t.Run("API error", func(t *testing.T) {
+		c := newTCPClient(t, jsonHandler(t, http.MethodGet, "/reverse_proxy/upstreams", http.StatusNotFound, `{"error":"no reverse proxy"}`))
+		_, err := c.Upstreams(context.Background())
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+			t.Fatalf("err = %v, want *APIError with status 404", err)
+		}
+	})
+	t.Run("invalid JSON", func(t *testing.T) {
+		c := newTCPClient(t, jsonHandler(t, http.MethodGet, "/reverse_proxy/upstreams", http.StatusOK, `not json`))
+		if _, err := c.Upstreams(context.Background()); err == nil {
+			t.Fatal("Upstreams succeeded on invalid JSON, want an error")
+		}
+	})
+}
+
+func TestNewRejectsMalformedURLs(t *testing.T) {
+	for _, addr := range []string{"http://[::1", "http://", "http:///config"} {
+		t.Run(addr, func(t *testing.T) {
+			if _, err := New(addr); err == nil {
+				t.Errorf("New(%q) succeeded, want an error", addr)
+			}
+		})
+	}
+}

@@ -207,7 +207,7 @@ func (c *Client) do(ctx context.Context, method, path, contentType string, paylo
 	if err != nil {
 		var opErr *net.OpError
 		if ctx.Err() == nil && errors.As(err, &opErr) && opErr.Op == "dial" {
-			return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
+			return nil, fmt.Errorf("%w: %w", ErrUnreachable, err)
 		}
 		return nil, err
 	}
