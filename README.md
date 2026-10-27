@@ -7,7 +7,7 @@ editor with validation and rollback, and a reverse proxy wizard.
 
 > **Status: early development.** The foundation and the read-only UI are done: Admin API client, `doctor`, `serve`
 > with a web UI (Dashboard, Config and live Logs) and CI on Linux, macOS and Windows. Editing comes in later phases.
-> See [docs/PLAN.md](docs/PLAN.md) for the full design and [docs/phase-1.md](docs/phase-1.md) for what is next.
+> See [docs/PLAN.md](docs/PLAN.md) for the full design and [docs/phase-1.md](docs/phase-1.md) for how phase 1 was built.
 
 ## Goals
 
@@ -144,7 +144,7 @@ and the tests with `-race` and shuffled order on Linux, macOS and Windows, plus 
 | Phase | Deliverable | State |
 |---|---|---|
 | 0 | Repo, structure, `doctor`, CI | Done |
-| 1 | Read-only UI: dashboard, config, live logs | Done except the check against the test Caddy (1e) |
+| 1 | Read-only UI: dashboard, config, live logs | Done |
 | 2 | SQLite, log ingestion, metrics history | Planned |
 | 3 | Caddyfile editing with validation and rollback | Planned |
 | 4 | Reverse proxy wizard and traffic charts | Planned |

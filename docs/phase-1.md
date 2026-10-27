@@ -2,6 +2,13 @@
 
 Goal: a web UI that observes Caddy and never changes it. It works against the test Caddy.
 
+**Status: done.** Every slice below was built tests first and checked against the test Caddy (Caddy 2.11.7 with
+`metrics` and a JSON access log enabled). `doctor` is green apart from the deliberately LAN-open Admin API, the UI
+lists the real sites and upstreams, and the Logs tab streams live traffic. The check found one bug, fixed with tests:
+Caddy 2.10 and later adapt `metrics` to the whole HTTP app instead of each server, so `doctor` now accepts both.
+
+**Status: done.** All slices below were built tests first and checked against the test Caddy (Caddy 2.11.7, with `metrics` and a JSON access log enabled): `doctor` is green apart from the deliberate LAN-open Admin API, the UI lists the real sites and upstreams, and the Logs tab streams live traffic. The check found one bug, fixed with tests: Caddy 2.10 and later adapt `metrics` to the whole HTTP app, not to each server, and `doctor` now accepts both.
+
 Everything here is built tests first (see `docs/PLAN.md`, section 11).
 
 ## Scope
@@ -122,4 +129,4 @@ with `go:embed`.
 | 1b | `serve` command: flags, loopback enforcement, graceful shutdown | Starts, serves the API, stops cleanly, refuses non-loopback |
 | 1c | Log tailer (`internal/logtail`), log file discovery (`caddy.AccessLogFiles`), the SSE route and `serve --access-log` | New lines reach a client; partial lines, truncation and rotation are handled without repeating lines; limits and disconnects are enforced |
 | 1d | Svelte UI in `web/`, built into `internal/web/dist` and embedded with `go:embed`; `internal/web` handler; CI check that `dist` is current | Go and JavaScript tests pass; `serve` shows Dashboard, Config and Logs in a browser |
-| 1e | Check against the test Caddy with `metrics` and JSON access log enabled | `doctor` is all green and the UI shows real sites and live logs |
+| 1e | Check against the test Caddy with `metrics` and JSON access log enabled | `doctor` is all green and the UI shows real sites and live logs (done) |
