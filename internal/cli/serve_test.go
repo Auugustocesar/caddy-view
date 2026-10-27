@@ -278,3 +278,25 @@ func TestServeLogLevelDebugShowsRequests(t *testing.T) {
 		t.Errorf("stderr %q does not show the request at debug level", stderr.String())
 	}
 }
+
+func TestServeServesTheUI(t *testing.T) {
+	admin := fakeAdmin(t, goodConfig)
+	base, stop, _, _ := startServe(t, "--admin", admin.URL)
+	defer stop()
+
+	resp, err := http.Get(base + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body bytes.Buffer
+	if _, err := body.ReadFrom(resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body.String(), `<div id="app">`) {
+		t.Errorf("GET / = %d %q, want the UI page", resp.StatusCode, body.String())
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+}

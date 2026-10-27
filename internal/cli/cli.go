@@ -15,6 +15,7 @@ import (
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
 	"github.com/Auugustocesar/caddy-view/internal/server"
+	"github.com/Auugustocesar/caddy-view/internal/web"
 )
 
 const usage = `Usage: caddy-view <command> [flags]
@@ -117,6 +118,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		ShowSecrets:   *showSecrets,
 		Logger:        logger,
 		AccessLogPath: *accessLog,
+		UI:            web.Handler(),
 	})
 	onListen := func(addr net.Addr) {
 		fmt.Fprintf(stdout, "caddy-view listening on http://%s (Admin API: %s)\n", addr, client.Endpoint())

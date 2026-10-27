@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
@@ -29,6 +30,8 @@ type Options struct {
 	ShowSecrets bool
 	// Logger receives operational logs. A nil Logger discards them.
 	Logger *slog.Logger
+	// UI serves every path outside /api/. When nil, those paths are a 404.
+	UI http.Handler
 	// AccessLogPath is the file followed by /api/logs/stream. When empty, the file is discovered from the
 	// running Caddy configuration.
 	AccessLogPath string
@@ -68,28 +71,40 @@ func New(c Caddy, opts Options) http.Handler {
 		"/api/logs/stream": a.logStream,
 	}
 	return a.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("Content-Type", "application/json")
-		h.Set("Cache-Control", "no-store")
-		h.Set("X-Content-Type-Options", "nosniff")
-
 		if !loopbackHost(r.Host) {
 			a.log.Warn("request rejected: host not allowed", "host", r.Host, "method", r.Method, "path", r.URL.Path)
+			setAPIHeaders(w)
 			writeError(w, http.StatusForbidden, "host not allowed")
 			return
 		}
+		if !isAPIPath(r.URL.Path) && opts.UI != nil {
+			opts.UI.ServeHTTP(w, r)
+			return
+		}
+
+		setAPIHeaders(w)
 		handler, ok := routes[r.URL.Path]
 		if !ok {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
 		if r.Method != http.MethodGet {
-			h.Set("Allow", http.MethodGet)
+			w.Header().Set("Allow", http.MethodGet)
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		handler(w, r)
 	}))
+}
+
+// isAPIPath reports whether a path belongs to the API, which never falls through to the UI.
+func isAPIPath(p string) bool { return p == "/api" || strings.HasPrefix(p, "/api/") }
+
+func setAPIHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Type", "application/json")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Content-Type-Options", "nosniff")
 }
 
 // logRequests logs every request at debug level, so normal operation stays quiet.
