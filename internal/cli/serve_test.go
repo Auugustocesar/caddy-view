@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -374,14 +375,17 @@ func TestServeReopensTheSameHistory(t *testing.T) {
 	}
 }
 
-const accessLine = `{"level":"info","ts":1761566400.123,"logger":"http.log.access.log0","msg":"handled request",` +
-	`"request":{"remote_ip":"10.0.0.7","client_ip":"10.0.0.7","method":"GET","host":"app.example.com","uri":"/ingested?token=secret"},` +
-	`"duration":0.01,"size":10,"status":200}` + "\n"
+// accessLine is an access log line stamped now: older ones would be past the default retention and deleted at once.
+func accessLine() string {
+	return fmt.Sprintf(`{"level":"info","ts":%d.123,"logger":"http.log.access.log0","msg":"handled request",`+
+		`"request":{"remote_ip":"10.0.0.7","client_ip":"10.0.0.7","method":"GET","host":"app.example.com","uri":"/ingested?token=secret"},`+
+		`"duration":0.01,"size":10,"status":200}`+"\n", time.Now().Unix())
+}
 
 func TestServeIngestsTheAccessLogIntoTheHistory(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(t.TempDir(), "access.log")
-	if err := os.WriteFile(logFile, []byte(accessLine), 0o600); err != nil {
+	if err := os.WriteFile(logFile, []byte(accessLine()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	admin := fakeAdmin(t, goodConfig)
@@ -420,7 +424,7 @@ func TestServeIngestsTheAccessLogIntoTheHistory(t *testing.T) {
 func TestServeKeepsTheQueryStringOnRequest(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(t.TempDir(), "access.log")
-	if err := os.WriteFile(logFile, []byte(accessLine), 0o600); err != nil {
+	if err := os.WriteFile(logFile, []byte(accessLine()), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	admin := fakeAdmin(t, goodConfig)
