@@ -3,13 +3,16 @@
  * a refused change says about itself.
  */
 export class ApiError extends Error {
-  /** @param {string} message @param {number} status @param {{code?: string, line?: number}} [details] */
+  /** @param {string} message @param {number} status @param {{code?: string, line?: number, errors?: Array<object>, site?: object}} [details] */
   constructor(message, status, details = {}) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     if (details.code !== undefined) this.code = details.code
     if (details.line !== undefined) this.line = details.line
+    // The fields of a managed site that were refused, and the site Caddy rejected.
+    if (details.errors !== undefined) this.errors = details.errors
+    if (details.site !== undefined) this.site = details.site
   }
 }
 
@@ -33,6 +36,8 @@ async function request(path, init) {
     throw new ApiError(typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`, res.status, {
       code: typeof body?.code === 'string' ? body.code : undefined,
       line: typeof body?.line === 'number' ? body.line : undefined,
+      errors: Array.isArray(body?.errors) ? body.errors : undefined,
+      site: body?.site && typeof body.site === 'object' ? body.site : undefined,
     })
   }
   return body
@@ -43,13 +48,21 @@ function get(path) {
   return request(path, { headers: { Accept: 'application/json' } })
 }
 
+/**
+ * A change: the server wants JSON on every one, a delete included, whether or not there is a body.
+ * @param {'POST'|'PUT'|'DELETE'} method @param {string} path @param {object} [body] @returns {Promise<any>}
+ */
+function send(method, path, body) {
+  return request(path, {
+    method,
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+}
+
 /** @param {string} path @param {object} body @returns {Promise<any>} */
 function post(path, body) {
-  return request(path, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+  return send('POST', path, body)
 }
 
 /** @returns {Promise<{caddy: {reachable: boolean, endpoint: string, error?: string}}>} */
@@ -127,4 +140,34 @@ export function applyCaddyfile(content, baseSha256) {
 /** @param {number} number @returns {Promise<{revision: object}>} */
 export function rollbackRevision(number) {
   return post(`/api/revisions/${number}/rollback`, {})
+}
+
+/** @returns {Promise<{sites: Array<object>, managedFile: string, imported: boolean, accessLog: boolean}>} */
+export function getManagedSites() {
+  return get('/api/managed-sites')
+}
+
+/** The generated text for a site, or what is wrong with it. @param {object} site @param {string} [id] the site it would replace @returns {Promise<{valid: boolean, text?: string, errors?: Array<{field: string, message: string}>}>} */
+export function previewSite(site, id) {
+  return post('/api/managed-sites/preview', id === undefined ? site : { id, ...site })
+}
+
+/** @param {object} site @returns {Promise<{site: object, revision: object}>} */
+export function createSite(site) {
+  return post('/api/managed-sites', site)
+}
+
+/** @param {string} id @param {object} site @returns {Promise<{site: object, revision: object}>} */
+export function updateSite(id, site) {
+  return send('PUT', `/api/managed-sites/${id}`, site)
+}
+
+/** @param {string} id @returns {Promise<{revision: object}>} */
+export function deleteSite(id) {
+  return send('DELETE', `/api/managed-sites/${id}`)
+}
+
+/** @returns {Promise<{revision: object}>} */
+export function addImport() {
+  return post('/api/managed-sites/import', {})
 }

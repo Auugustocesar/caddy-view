@@ -17,6 +17,10 @@ describe('tidyCaddyError', () => {
     ],
     ['adapting config using caddyfile adapter: unrecognized directive: nope, at Caddyfile:2', 'unrecognized directive: nope'],
     ['ambiguous site definition: http://hand.localhost', 'ambiguous site definition: http://hand.localhost'],
+    [
+      'Nothing was applied and the sites are unchanged: caddy rejected the site app.localhost: adapting config using caddyfile adapter: ambiguous site definition: http://app.localhost',
+      'Nothing was applied and the sites are unchanged: caddy rejected the site app.localhost: ambiguous site definition: http://app.localhost',
+    ],
     ['unrecognized directive: nope', 'unrecognized directive: nope'],
     ['', ''],
   ])('%j becomes %j', (said, want) => {

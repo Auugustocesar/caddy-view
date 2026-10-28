@@ -20,6 +20,10 @@ type SiteManager interface {
 	PreviewSites(ctx context.Context, desired []store.Site) (string, error)
 	// ApplySites makes the desired sites the managed ones, or changes nothing and says why.
 	ApplySites(ctx context.Context, desired []store.Site) (store.Revision, error)
+	// ManagedState says where the managed file is and whether the Caddyfile imports it.
+	ManagedState(ctx context.Context) (configmgr.ManagedState, error)
+	// AddImport adds the import of the managed file to the Caddyfile, or changes nothing and says why.
+	AddImport(ctx context.Context) (store.Revision, error)
 }
 
 // siteSaid is what a refused change of sites says first: that nothing happened.
@@ -132,11 +136,38 @@ func (a *api) sitesList(w http.ResponseWriter, r *http.Request) {
 		a.internal(w, r, err)
 		return
 	}
+	state, err := a.opts.Sites.ManagedState(r.Context())
+	if err != nil {
+		a.internal(w, r, err)
+		return
+	}
 	out := make([]managedSiteJSON, len(all))
 	for i, s := range all {
 		out[i] = managedSiteAnswer(s)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sites": out})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sites": out, "managedFile": state.File, "imported": state.Imported, "accessLog": state.AccessLog,
+	})
+}
+
+// importSaid is what a refused import says first: that the Caddyfile was left as it was.
+var importSaid = phrases{
+	notApplied: "Nothing was changed: ",
+	notCleanly: "The import was not added cleanly and caddy-view could not put everything back: ",
+}
+
+// sitesImport adds the import of the managed file to the Caddyfile. The path is the server's, never the request's.
+func (a *api) sitesImport(w http.ResponseWriter, r *http.Request) {
+	var body struct{}
+	if !readBody(w, r, &body, true) {
+		return
+	}
+	rev, err := a.opts.Sites.AddImport(r.Context())
+	if err != nil {
+		a.changeFailedWith(w, r, rev, err, importSaid)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revision": revisionAnswer(rev, false)})
 }
 
 // changed answers a change of sites that went through, with the site as it was saved when there is one.

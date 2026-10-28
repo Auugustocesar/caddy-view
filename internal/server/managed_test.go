@@ -23,8 +23,23 @@ type fakeSites struct {
 	applyErr   error
 	applyRev   store.Revision
 
+	state     configmgr.ManagedState
+	stateErr  error
+	importRev store.Revision
+	importErr error
+
 	previewed [][]store.Site
 	applied   [][]store.Site
+	imports   int
+}
+
+func (f *fakeSites) ManagedState(context.Context) (configmgr.ManagedState, error) {
+	return f.state, f.stateErr
+}
+
+func (f *fakeSites) AddImport(context.Context) (store.Revision, error) {
+	f.imports++
+	return f.importRev, f.importErr
 }
 
 func (f *fakeSites) Sites(context.Context) ([]store.Site, error) {
@@ -66,7 +81,9 @@ func newFakeSites() *fakeSites {
 				RedirectCode: 308, TLS: store.TLSOff, Enabled: false, CreatedAt: clock.Add(-2 * time.Hour), UpdatedAt: clock.Add(-2 * time.Hour),
 			},
 		},
-		applyRev: store.Revision{Number: 9, Time: clock, Trigger: store.TriggerSiteChange, Status: store.StatusApplied, SHA256: digestA},
+		applyRev:  store.Revision{Number: 9, Time: clock, Trigger: store.TriggerSiteChange, Status: store.StatusApplied, SHA256: digestA},
+		state:     configmgr.ManagedState{File: "/etc/caddy/conf.d/caddy-view-sites.caddy", Imported: true, AccessLog: true},
+		importRev: store.Revision{Number: 10, Time: clock, Trigger: store.TriggerAddImport, Status: store.StatusApplied, SHA256: digestA},
 	}
 }
 

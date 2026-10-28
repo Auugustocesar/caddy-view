@@ -147,6 +147,8 @@ func (a *api) changeFailedWith(w http.ResponseWriter, r *http.Request, rev store
 			f.Errors = siteProblems(invalid)
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, f)
+	case errors.Is(err, configmgr.ErrAlreadyImported):
+		writeJSON(w, http.StatusConflict, failureJSON{Error: say.notApplied + err.Error(), Code: "already-imported"})
 	case errors.Is(err, configmgr.ErrNotImported):
 		writeJSON(w, http.StatusUnprocessableEntity, failureJSON{Error: say.notApplied + err.Error(), Code: "not-imported"})
 	case errors.Is(err, configmgr.ErrManagedEdited):

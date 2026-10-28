@@ -95,7 +95,8 @@ Only with `--allow-edit` (a 404 otherwise):
 | `POST /api/caddyfile/apply` | Validates, writes and loads a candidate; undoes it when Caddy refuses it |
 | `GET /api/revisions`, `GET /api/revisions/{n}` | The history of attempts, newest first, and one with its content |
 | `POST /api/revisions/{n}/rollback` | Applies an earlier revision as a new one |
-| `GET /api/managed-sites`, `POST /api/managed-sites` | The sites caddy-view manages, and creating one (see "Managed sites") |
+| `GET /api/managed-sites`, `POST /api/managed-sites` | The sites caddy-view manages (with the managed file, whether the Caddyfile imports it, and whether an access log is known), and creating one (see "Managed sites") |
+| `POST /api/managed-sites/import` | Adds the missing `import` of the managed file to the Caddyfile, as a revision of its own |
 | `POST /api/managed-sites/preview` | Checks a site and shows the managed file it would produce, without applying |
 | `PUT /api/managed-sites/{id}`, `DELETE /api/managed-sites/{id}` | Changing and removing a managed site |
 

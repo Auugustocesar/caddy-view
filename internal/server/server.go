@@ -98,6 +98,7 @@ func New(c Caddy, opts Options) http.Handler {
 	if opts.Sites != nil {
 		routes["/api/managed-sites"] = onGet(a.sitesList).with(http.MethodPost, a.sitesCreate)
 		routes["/api/managed-sites/preview"] = onPost(a.sitesPreview)
+		routes["/api/managed-sites/import"] = onPost(a.sitesImport)
 	}
 	if opts.Editor != nil {
 		routes["/api/caddyfile"] = onGet(a.caddyfile)

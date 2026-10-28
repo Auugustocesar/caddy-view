@@ -353,6 +353,64 @@ does not go through that path, so it was not seen there. The API names (`manual-
 hyphens, which the screen's own test data had underscored: caught in the browser, fixed, and the tests now use the real
 values.
 
+### Slice 4e in detail
+
+**What the interface cannot guess, the API says.** `GET /api/managed-sites` answers, besides `sites`, `managedFile` (the
+absolute path), `imported` (does the Caddyfile import it, by the same `ImportsFile` as `ApplySites`) and `accessLog`
+(an access log file is known, so a site may ask for logging). `POST /api/managed-sites/import` adds the missing import
+line and applies it as a revision of its own (trigger `add-import`, so the history does not call it a manual edit):
+
+- `caddyfile.AddImport(text, path)` is pure. The line goes after the global options block when the file has one (a block
+  of braces that is the first thing in the file, comments aside), else before the first site or snippet; leading
+  comments stay on top; the line is set apart by blank lines; the line ending of the file is kept; a path with white
+  space is quoted; a path that cannot be written safely (a quote, a brace, a line break) is an error, and the result
+  satisfies `ImportsFile` and is a fixed point of `Format`.
+- `Manager.AddImport` refuses a Caddyfile that already imports the file (`ErrAlreadyImported`, 409 `already-imported`) and a
+  manager without a managed file (`ErrNoManagedFile`), creates the managed file empty if it is missing (Caddy refuses to
+  import a file that is not there, and an empty managed file is one `ApplySites` may overwrite), and applies the new text
+  through `Apply`, so it has every guard of an edit: the stale-base check, `/adapt`, the admin and relative-import guards,
+  the verification after `/load`, and a restore on failure. If the apply fails, a managed file it created is removed.
+
+**The Sites tab** (`screens/SitesView.svelte`, owns its data): the managed sites as a table (hostname, what it does, TLS,
+enabled, Edit, Delete, and Enable/Disable), "Add site", and below it the sites running in Caddy, read-only, each marked as
+managed or from the Caddyfile. Without `--allow-edit` (`/api/managed-sites` answers 404) it says how to turn editing on.
+When the Caddyfile does not import the managed file it says so, shows the path and offers **Add the import**; adding a site
+waits for it. Disabling is a change of the site like any other (a `PUT`), deleting asks first.
+
+**The wizard** (`components/SiteWizard.svelte`, used to add and to edit): hostname, kind (reverse proxy or redirect),
+upstreams one per line, skip TLS verification, TLS mode, redirect target and code, request logging (off, with the reason,
+when no access log is known) and enabled. It has no validation of its own: the one implementation is `sites.Validate`, so
+every change is sent to `POST /api/managed-sites/preview`, which answers the generated text, shown under the form, or the
+errors by field. A field shows its error once it has been touched, and all of them after a refused submit, so an empty form
+is not red from the start. A refusal from Caddy (`site-rejected`) or from the apply keeps the form and says that nothing
+was applied. The helpers that turn a form into a request and back are in `lib/site-form.js`.
+
+**Tests.** Go: `AddImport` as a table, the manager against fakes and against a real Caddy (a Caddyfile without the import
+gets it, Caddy keeps serving its own sites, and then a managed site is served), the routes against a fake manager, the
+trigger in the store contract. Web: the API client, `site-form`, the wizard and the screen with a fake server, as in 4d;
+then the browser, with a real `serve` and Caddy, light, dark and phone width.
+
+**Done, and what the browser and the real Caddy showed.**
+- Built as written. `AddImport` has a fuzz (6.5 million runs, no failure) and `scan` in `format.go` now gives every token its line,
+  so the import goes after the global block by the same reading of braces that `Format` uses. A real Caddy takes the
+  Caddyfile with the import and keeps serving its own sites; then a managed site is served through it.
+- In the browser, with a Caddyfile that did not import the managed file: the Setup banner, "Add the import" (the line
+  lands after the global block with a blank line each side, the managed file is created empty, revision 1 has the trigger
+  `add-import`, the hand-written site still answers), a hostname typed badly (the server's message under the field, and only
+  there), a reverse proxy created with request logging (the preview shows the snippet and the block; the backend answered
+  through Caddy), disable, enable and delete with a confirmation (each a revision, each reflected in what Caddy serves),
+  and a refusal by Caddy for a hostname the Caddyfile already serves (`ambiguous site definition: http://app.localhost`,
+  the form stays open, nothing applied).
+- The first phone layout was a table wider than the screen, with the actions out of sight; below 40 rem each row is now a
+  card with its labels. The actions of a row are in a container inside the cell: a flex cell broke the table columns.
+- The wizard once froze the tab: an effect read the state it was writing (`check`), so it re-ran for ever. The text of the
+  last check is now read with `untrack`. The jsdom tests found it as a hang, not as a failure.
+- The message of a refusal carried Caddy's adapter prefix in its middle; `tidyCaddyError` removes it wherever it is.
+- **A limit, left as it is:** the "Defined in" column of the running sites matches by hostname alone, so a hand-written
+  `http://app.localhost` is marked "managed" when a managed `app.localhost` with automatic TLS (which is
+  `https://app.localhost`) exists. `/api/sites` does not say which address a site came from. Matching by the managed site's
+  TLS mode would be a guess; the badge says what is known.
+
 ## Slices
 
 The backend of managed sites comes first, because it is the part with real risk and it is checked against a real Caddy;
@@ -364,7 +422,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 | 4b | Managed sites, backend: migration 5, validation, the generator, apply with a managed file, rollback of both, `--managed-file`, the API (`/api/managed-sites`), done; `--backup-mode` waits for 4h | A real Caddy serves a site created through the API, refuses a duplicate hostname, and rolls it back; a killed apply is recovered |
 | 4c | Design system, app shell, Dashboard with tiles and the traffic chart (done) | Tests pass; looked at in light, dark and phone width |
 | 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback (done) | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |
-| 4e | Sites tab and the wizard, including "add the import" | Creating a reverse proxy from the browser works against a real Caddy |
+| 4e | Sites tab and the wizard, including "add the import" (done) | Creating a reverse proxy from the browser works against a real Caddy |
 | 4f | Metrics tab and Logs history search | Charts match `/api/traffic`; a search finds a stored request |
 | 4g | Basic auth: bcrypt in-process, the field in the wizard, the generated `basic_auth` block | A real Caddy asks for the password of a site and accepts the right one; the password is stored nowhere |
 | 4h | Config tab; `--backup-mode sites-only` if question 3 is answered yes | The tab shows what `/api/system` says |

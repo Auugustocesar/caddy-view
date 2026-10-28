@@ -34,6 +34,8 @@ type fmtToken struct {
 	text string
 	// newlines counts the line breaks between the previous token and this one; zero means the same line.
 	newlines int
+	// line is where the token starts, counting from 0.
+	line int
 }
 
 // heredocName is what Caddy accepts as the marker of a heredoc.
@@ -47,10 +49,24 @@ func scan(text string) []fmtToken {
 		tokens   []fmtToken
 		word     strings.Builder
 		newlines int
+		line     int // the line being read
+		wordLine int // the line the word being read started on
 	)
 	emit := func(kind tokenKind, s string) {
-		tokens = append(tokens, fmtToken{kind: kind, text: s, newlines: newlines})
+		at := line
+		if kind == wordToken {
+			at = wordLine
+		}
+		tokens = append(tokens, fmtToken{kind: kind, text: s, newlines: newlines, line: at})
 		newlines = 0
+	}
+	// add puts text in the word, which may run over several lines when it is a string or a heredoc.
+	add := func(s string) {
+		if word.Len() == 0 {
+			wordLine = line
+		}
+		word.WriteString(s)
+		line += strings.Count(s, "\n")
 	}
 	endWord := func() {
 		if word.Len() > 0 {
@@ -65,6 +81,7 @@ func scan(text string) []fmtToken {
 		case c == '\n':
 			endWord()
 			newlines++
+			line++
 			i++
 		case c == ' ' || c == '\t':
 			endWord()
@@ -78,15 +95,15 @@ func scan(text string) []fmtToken {
 			i += end
 		case (c == '"' || c == '`') && closingQuote(text, i) > 0:
 			end := closingQuote(text, i)
-			word.WriteString(text[i:end])
+			add(text[i:end])
 			i = end
 		case c == '<' && word.Len() == 0 && heredocEnd(text, i) > 0:
 			end := heredocEnd(text, i)
-			word.WriteString(text[i:end])
+			add(text[i:end])
 			i = end
 		case c == '{' && placeholderEnd(text, i) > 0:
 			end := placeholderEnd(text, i)
-			word.WriteString(text[i:end])
+			add(text[i:end])
 			i = end
 		case c == '{':
 			endWord()
@@ -97,7 +114,7 @@ func scan(text string) []fmtToken {
 			emit(closeToken, "}")
 			i++
 		default:
-			word.WriteByte(c)
+			add(text[i : i+1])
 			i++
 		}
 	}

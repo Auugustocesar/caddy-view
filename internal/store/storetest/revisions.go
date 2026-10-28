@@ -106,6 +106,17 @@ func RunRevisions(t *testing.T, newStore func(t *testing.T) RevisionStore) {
 		}
 	})
 
+	t.Run("every trigger the manager uses is accepted", func(t *testing.T) {
+		s := fresh(t)
+		for _, trigger := range []store.RevisionTrigger{store.TriggerManualEdit, store.TriggerSiteChange, store.TriggerRollback, store.TriggerAddImport} {
+			r := revision("a", base)
+			r.Trigger = trigger
+			if _, err := s.AddRevision(ctx, r); err != nil {
+				t.Errorf("AddRevision with trigger %q: %v", trigger, err)
+			}
+		}
+	})
+
 	t.Run("an empty Caddyfile is a valid revision", func(t *testing.T) {
 		s := fresh(t)
 		if _, err := s.AddRevision(ctx, revision("", base)); err != nil {

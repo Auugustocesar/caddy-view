@@ -41,6 +41,8 @@ function fakeFetch(url) {
       return Promise.resolve(json({ content: 'example.com {\n}\n', sha256: 'a'.repeat(64) }))
     case '/api/revisions?limit=20':
       return Promise.resolve(json({ revisions: [], next: null }))
+    case '/api/managed-sites':
+      return Promise.resolve(json({ sites: [], managedFile: '/etc/caddy/conf.d/sites.caddy', imported: true, accessLog: false }))
     case '/api/summary?window=24h':
       return Promise.resolve(json(summary))
     case '/api/traffic?resolution=hour':
@@ -75,13 +77,14 @@ afterEach(() => {
 })
 
 describe('App navigation', () => {
-  it('has exactly the four tabs, as links', () => {
+  it('has exactly the five tabs, as links', () => {
     openAt('/')
     const nav = screen.getByRole('navigation')
     const links = Array.from(nav.querySelectorAll('a')).map((a) => [a.textContent.trim(), a.getAttribute('href')])
     expect(links).toEqual([
       ['Dashboard', '/'],
       ['Logs', '/logs'],
+      ['Sites', '/sites'],
       ['Caddyfile', '/caddyfile'],
       ['Config', '/config'],
     ])
@@ -91,6 +94,7 @@ describe('App navigation', () => {
     ['/', 'Dashboard'],
     ['/config', 'Config'],
     ['/logs', 'Logs'],
+    ['/sites', 'Sites'],
     ['/caddyfile', 'Caddyfile'],
     ['/unknown', 'Dashboard'],
   ])('opens %s on the %s tab', (path, label) => {
@@ -130,6 +134,12 @@ describe('App screens', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
     openAt('/')
     expect((await screen.findByRole('alert')).textContent).toMatch(/caddy-view/i)
+  })
+
+  it('opens the managed sites on the Sites tab', async () => {
+    openAt('/sites')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sites' })).toBeTruthy()
+    expect(await screen.findByText(/no managed sites yet/i)).toBeTruthy()
   })
 
   it('opens the Caddyfile editor on its tab', async () => {

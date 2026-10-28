@@ -36,6 +36,7 @@ const (
 	TriggerManualEdit RevisionTrigger = "manual-edit"
 	TriggerSiteChange RevisionTrigger = "site-change"
 	TriggerRollback   RevisionTrigger = "rollback"
+	TriggerAddImport  RevisionTrigger = "add-import"
 )
 
 // RevisionStatus is where a revision is in the apply flow.
@@ -68,7 +69,7 @@ type Revision struct {
 
 func validTrigger(t RevisionTrigger) bool {
 	switch t {
-	case TriggerManualEdit, TriggerSiteChange, TriggerRollback:
+	case TriggerManualEdit, TriggerSiteChange, TriggerRollback, TriggerAddImport:
 		return true
 	}
 	return false

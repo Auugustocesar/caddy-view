@@ -1,4 +1,5 @@
-const ADAPTER_PREFIX = /^adapting config using caddyfile adapter:\s*/
+// What Caddy's adapter puts in front of its own message; wherever it sits in what caddy-view said.
+const ADAPTER_PREFIX = /adapting config using caddyfile adapter:\s*/g
 // Where the error is, and the chain of imports that led there: the page shows the line, and marks it.
 const POSITION_SUFFIX = /,?\s+at \S+:\d+(?:\s+import chain: \[.*\])?\s*$/
 
