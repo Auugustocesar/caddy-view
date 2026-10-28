@@ -14,7 +14,7 @@ this document pins down the parts that section leaves open.
 | Apply: revision, validate, atomic write, `/load`, automatic restore on failure | Login, users, sessions (phase 5) |
 | Revision history and rollback | The `sites-only` backup mode (phase 4, with the sites table) |
 | Detect edits made outside caddy-view (stale base, drift at start) | History tab, dashboard and design pass (phase 4) |
-| Write routes behind `--allow-edit` and a `--caddyfile` path | |
+| Write routes behind `--allow-edit` and a `--caddyfile` path | Caddyfile tab in the UI: editor, diff, history, rollback (phase 4, with the rest of the front end) |
 
 ## Decisions
 
@@ -108,13 +108,10 @@ Without `--allow-edit` they are a 404, like the history routes without a store, 
 | 3a | `internal/configmgr` against fakes: `Current`, `Validate`, `Apply`, `Rollback`, `Reconcile`; `store.Revision` types | The state machine, stale base, atomic write, restore and recovery tests pass with `-race` |
 | 3b | Revisions in `store`: migration 4, `SQLite` and `Memory`, a contract suite | Both stores pass the suite; numbers never repeat; data survives a reopen |
 | 3c | HTTP: `GET /api/caddyfile`, `POST /api/caddyfile/validate`, `POST /api/caddyfile/apply`, `GET /api/revisions[/{n}]`, `POST /api/revisions/{n}/rollback`; `serve --caddyfile` and `--allow-edit` | Routes are a 404 without `--allow-edit`; the API tests and the serve test pass |
-| 3d | Caddyfile tab: editor with validation, diff, apply, history and rollback | JavaScript tests pass; an invalid config is refused in the UI |
-| 3e | Integration against a real Caddy: invalid candidate, failing `/load`, rollback, an edit made outside | An invalid config never leaves Caddy broken, checked on the test Caddy |
+| 3d | Moved to phase 4: the Caddyfile tab (editor, validation, diff, apply, history, rollback). The API of 3c is complete without it | |
+| 3e | Integration against a real Caddy: invalid candidate, failing `/load`, rollback, an edit made outside | An invalid config never leaves Caddy broken, checked against a real Caddy |
 
 ## Open questions
 
-- **Security of the write routes before login exists.** Phase 5 adds authentication, but phase 3 adds routes that
-  change Caddy. Proposal: they exist only with `--allow-edit`, and `--allow-edit` is refused unless `--listen` is
-  loopback, plus the existing Host check. To confirm in slice 3c.
-- **Editor widget.** `docs/PLAN.md` names CodeMirror 6 with a simple Caddyfile mode. Size and licence are checked
-  in slice 3d before it is added. Whether the editor tab waits for the phase 4 front-end work is decided in 3d.
+- **Editor widget (phase 4).** `docs/PLAN.md` names CodeMirror 6 with a simple Caddyfile mode. Size and licence are
+  checked in phase 4 before it is added.
