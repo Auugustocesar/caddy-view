@@ -209,7 +209,7 @@ written against an API that already exists and is tested.
 | 2c | `internal/promtext` (a small Prometheus text parser) and the scraper with counter deltas | Deltas, counter resets and a missing `metrics` option are handled; samples are stored |
 | 2d | Rollups, retention, size cap | Rollups match the raw entries; retention and the cap delete the right rows |
 | 2e | API (`/api/logs`, `/api/traffic`, `/api/summary`); the interface moves to phase 4 | Go tests pass; the API answers from the history after a restart |
-| 2f | Check against the test Caddy over a few days of real traffic, including a real log rotation | Numbers from the API match the log file; nothing repeats or disappears across a restart and a rotation |
+| 2f | Deferred to the pre-release check (phase 5): a few days of real traffic against the test Caddy, including a real log rotation, and retention and the size cap on a large database | Numbers from the API match the log file; nothing repeats or disappears across a restart and a rotation |
 
 ## Open questions
 
