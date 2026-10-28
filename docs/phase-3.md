@@ -98,6 +98,8 @@ Without `--allow-edit` they are a 404, like the history routes without a store, 
   - A revision is `number`, `time` (RFC 3339, UTC), `trigger`, `status`, `sha256` and `error` (when set).
 - **Failures of apply and rollback** are `{"error", "code", ...}`: `conflict` (409), `invalid` (422, with `line`),
   `admin-moved` (422, added in 3e: the change would move or turn off Caddy's admin endpoint),
+  `relative-import` (422, added in 3f with `line`: the candidate imports a file by a relative path, see
+  `docs/backlog.md` B1),
   `apply-failed` (502, Caddy refused to load it and the previous file was restored, with the `revision`),
   `recovery-required` (500, with the `revision`) and `not-found` (404, rollback of an unknown revision). Anything else
   is a 500 with a generic message; the cause goes to the log.
@@ -137,7 +139,7 @@ The fakes of 3a prove the state machine; only a real Caddy proves that it matche
 | 3c | HTTP: `GET /api/caddyfile`, `POST /api/caddyfile/validate`, `POST /api/caddyfile/apply`, `GET /api/revisions[/{n}]`, `POST /api/revisions/{n}/rollback`; `serve --caddyfile` and `--allow-edit` | Routes are a 404 without `--allow-edit`; the API tests and the serve test pass |
 | 3d | Moved to phase 4: the Caddyfile tab (editor, validation, diff, apply, history, rollback). The API of 3c is complete without it | |
 | 3e | The admin guard (`ErrAdminMoved`, with fakes), then integration against a real Caddy: invalid candidate, failing `/load`, rollback, an edit made outside, a moved admin endpoint | The guard tests pass with `-race`; an invalid config never leaves Caddy broken, checked against a real Caddy in CI |
-| 3f | Hardening, from `docs/backlog.md`: B1 (what Caddy loads is what the file says, with a spike first), B2 (crash recovery of unfinished revisions), B3 (verify after `/load` and live drift, with a spike first), B4 (one apply across processes) | Each has a failing test first; B1 and B3 are checked against a real Caddy |
+| 3f | Hardening, from `docs/backlog.md`: B1 (a relative `import` makes an apply drop the imported sites: confirmed by a spike, so it is refused, and `doctor` is fixed), B2 (crash recovery of unfinished revisions), B3 (verify after `/load` and live drift, with a spike first), B4 (one apply across processes) | Each has a failing test first; B1 and B3 are checked against a real Caddy |
 
 ## Open questions
 

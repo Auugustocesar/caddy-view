@@ -59,13 +59,16 @@ func byID(t *testing.T, results []Result, id string) Result {
 }
 
 func TestRunAllGood(t *testing.T) {
-	opts := Options{
-		Admin:         "unix:///run/caddy/admin.sock",
-		CaddyfilePath: writeCaddyfile(t, "import conf.d/*.caddy\n"),
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Caddyfile")
+	// The import is absolute: a relative one is warned about, because caddy-view cannot apply it faithfully.
+	if err := os.WriteFile(path, []byte("import "+filepath.ToSlash(dir)+"/conf.d/*.caddy\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
+	opts := Options{Admin: "unix:///run/caddy/admin.sock", CaddyfilePath: path}
 	results := Run(context.Background(), opts, goodFetcher(t))
 
-	want := []string{"admin-transport", "admin-reachable", "metrics", "access-log", "caddyfile", "import"}
+	want := []string{"admin-transport", "admin-reachable", "metrics", "access-log", "caddyfile", "import", "relative-import"}
 	if got := ids(results); !reflect.DeepEqual(got, want) {
 		t.Fatalf("result IDs = %v, want %v", got, want)
 	}
@@ -92,7 +95,7 @@ func TestRunUnreachableSkipsConfigChecks(t *testing.T) {
 	}
 	results := Run(context.Background(), opts, fetcher)
 
-	want := []string{"admin-transport", "admin-reachable", "caddyfile", "import"}
+	want := []string{"admin-transport", "admin-reachable", "caddyfile", "import", "relative-import"}
 	if got := ids(results); !reflect.DeepEqual(got, want) {
 		t.Fatalf("result IDs = %v, want %v (config checks must not run without a config)", got, want)
 	}
@@ -149,6 +152,14 @@ func TestRunManagedFile(t *testing.T) {
 		}
 		assertStatus(t, byID(t, Run(context.Background(), opts, goodFetcher(t)), "import"), StatusWarn)
 	})
+}
+
+func TestRunWarnsAboutARelativeImport(t *testing.T) {
+	opts := Options{Admin: "localhost:2019", CaddyfilePath: writeCaddyfile(t, "import conf.d/*.caddy\n")}
+	results := Run(context.Background(), opts, goodFetcher(t))
+	// The managed file is imported, which is what the import check looks at; the way it is written is the other check.
+	assertStatus(t, byID(t, results, "import"), StatusOK)
+	assertStatus(t, byID(t, results, "relative-import"), StatusWarn)
 }
 
 func TestRunWarningsComeFromTheChecks(t *testing.T) {

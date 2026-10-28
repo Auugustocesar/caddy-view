@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	cf "github.com/Auugustocesar/caddy-view/internal/caddyfile"
 	"github.com/Auugustocesar/caddy-view/internal/cfgpath"
 	"github.com/Auugustocesar/caddy-view/internal/netutil"
 )
@@ -133,9 +135,34 @@ func CheckAccessLog(cfg Config) Result {
 	}
 }
 
-// CheckImport reports whether the Caddyfile imports the file caddy-view manages.
-func CheckImport(caddyfile, target string) Result {
+// CheckRelativeImports warns about the imports of files by a relative path, which caddy-view cannot apply faithfully:
+// Caddy resolves them against its working directory when it is given text through the Admin API.
+func CheckRelativeImports(text, caddyfilePath string) Result {
+	const id = "relative-import"
+	imports := cf.RelativeImports(text)
+	if len(imports) == 0 {
+		return Result{ID: id, Status: StatusOK, Message: "the Caddyfile imports no file by a relative path"}
+	}
+	first := imports[0]
+	message := fmt.Sprintf("line %d imports %s by a relative path", first.Line, first.Pattern)
+	if len(imports) > 1 {
+		message += fmt.Sprintf(" (and %d more)", len(imports)-1)
+	}
+	full := path.Join(filepath.ToSlash(filepath.Dir(caddyfilePath)), first.Pattern)
+	return Result{
+		ID:      id,
+		Status:  StatusWarn,
+		Message: message,
+		Hint: fmt.Sprintf("Write the path in full, such as `import %s`. caddy-view sends changes to Caddy as text, and Caddy "+
+			"resolves a relative path from its own working directory, so an apply would drop what is imported.", full),
+	}
+}
+
+// CheckImport reports whether the Caddyfile, which lives in dir, imports the file caddy-view manages. The import may
+// be relative to dir or an absolute path.
+func CheckImport(caddyfile, dir, target string) Result {
 	const id = "import"
+	absolute := path.Join(filepath.ToSlash(dir), target)
 	for _, line := range strings.Split(caddyfile, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 || fields[0] != "import" {
@@ -145,12 +172,17 @@ func CheckImport(caddyfile, target string) Result {
 		if ok, err := path.Match(arg, target); err == nil && ok {
 			return Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("the Caddyfile imports %s", target)}
 		}
+		if ok, err := path.Match(arg, absolute); err == nil && ok {
+			return Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("the Caddyfile imports %s", target)}
+		}
 	}
 	return Result{
 		ID:      id,
 		Status:  StatusWarn,
 		Message: fmt.Sprintf("the Caddyfile does not import %s", target),
-		Hint:    "Add `import conf.d/*.caddy` to the Caddyfile so sites created in caddy-view are loaded.",
+		Hint: fmt.Sprintf("Add `import %s/*.caddy` to the Caddyfile so sites created in caddy-view are loaded. "+
+			"Write the path in full: caddy-view cannot apply a relative import faithfully.",
+			path.Join(filepath.ToSlash(dir), path.Dir(target))),
 	}
 }
 

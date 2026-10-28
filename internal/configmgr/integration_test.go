@@ -56,6 +56,7 @@ type realCaddy struct {
 	mgr       *Manager
 	client    *caddy.Client
 	store     *store.Memory
+	dir       string
 	path      string
 	adminAddr string
 	sitePort  int
@@ -66,19 +67,36 @@ func (r *realCaddy) caddyfile(body string) string {
 	return fmt.Sprintf("{\n\tadmin %s\n\tauto_https off\n}\n:%d {\n\trespond %q\n}\n", r.adminAddr, r.sitePort, body)
 }
 
+// newRealCaddy prepares a Caddy that is not running yet: a directory, free ports and a store. The Caddyfile is the
+// test's to write at r.path before it calls start.
+func newRealCaddy(t *testing.T) *realCaddy {
+	t.Helper()
+	caddyBinary(t) // skip early, before anything is prepared
+	dir := t.TempDir()
+	return &realCaddy{
+		dir: dir, path: filepath.Join(dir, "Caddyfile"), sitePort: freePort(t), store: store.NewMemory(),
+		adminAddr: fmt.Sprintf("127.0.0.1:%d", freePort(t)),
+	}
+}
+
 func startCaddy(t *testing.T, firstBody string) *realCaddy {
 	t.Helper()
-	bin := caddyBinary(t)
-	dir := t.TempDir()
-	r := &realCaddy{path: filepath.Join(dir, "Caddyfile"), sitePort: freePort(t), store: store.NewMemory()}
-	r.adminAddr = fmt.Sprintf("127.0.0.1:%d", freePort(t))
+	r := newRealCaddy(t)
 	if err := os.WriteFile(r.path, []byte(r.caddyfile(firstBody)), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	r.start(t, r.dir)
+	return r
+}
+
+// start runs Caddy on the Caddyfile at r.path, from the working directory workDir, and waits until its admin answers.
+func (r *realCaddy) start(t *testing.T, workDir string) {
+	t.Helper()
+	bin, dir := caddyBinary(t), r.dir
 
 	var logs bytes.Buffer
 	cmd := exec.Command(bin, "run", "--config", r.path, "--adapter", "caddyfile")
-	cmd.Dir = dir
+	cmd.Dir = workDir
 	cmd.Stdout, cmd.Stderr = &logs, &logs
 	cmd.Env = append(os.Environ(),
 		"XDG_CONFIG_HOME="+filepath.Join(dir, "config"), "XDG_DATA_HOME="+filepath.Join(dir, "data"),
@@ -110,7 +128,6 @@ func startCaddy(t *testing.T, firstBody string) *realCaddy {
 		time.Sleep(50 * time.Millisecond)
 	}
 	r.mgr = New(client, r.store, Options{Path: r.path})
-	return r
 }
 
 // serves reports what the site answers now.
@@ -255,4 +272,65 @@ func TestRealCaddyStaysReachableWhenAChangeWouldMoveTheAdmin(t *testing.T) {
 		t.Errorf("revision %+v: want failed, the old file and v0", rev)
 	}
 	r.reachable(t)
+}
+
+// A Caddyfile that imports a file by a relative path must load the same through the manager as it does when Caddy
+// starts from the file, whatever directory Caddy runs in. The text sent to /adapt and /load carries no file name.
+//
+// Found with Caddy 2.11.7: the text sent to /adapt and /load is resolved against Caddy's working directory, so a
+// relative import matches nothing and the apply "succeeds" with the imported sites gone. caddy-view refuses such a
+// Caddyfile instead (docs/backlog.md, B1). The same Caddyfile with the import written in full is applied.
+
+// importingCaddy starts a Caddy, from a directory that is not the Caddyfile's, whose Caddyfile imports a site with the
+// import line that importLine gives for the directory of the Caddyfile. mainFile writes the Caddyfile with a note
+// appended, so that a change can be made without touching the import.
+func importingCaddy(t *testing.T, importLine func(dir string) string) (r *realCaddy, mainFile func(note string) string) {
+	t.Helper()
+	r = newRealCaddy(t)
+	mainFile = func(note string) string {
+		return fmt.Sprintf("{\n\tadmin %s\n\tauto_https off\n}\n%s\n%s", r.adminAddr, importLine(r.dir), note)
+	}
+	if err := os.Mkdir(filepath.Join(r.dir, "conf.d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	site := fmt.Sprintf(":%d {\n\trespond \"imported\"\n}\n", r.sitePort)
+	if err := os.WriteFile(filepath.Join(r.dir, "conf.d", "site.caddy"), []byte(site), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.path, []byte(mainFile("")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.start(t, t.TempDir())
+	if got := r.serves(t); got != "imported" {
+		t.Fatalf("at start the site answers %q, want imported: Caddy resolves imports from the file it starts from", got)
+	}
+	return r, mainFile
+}
+
+func TestRealCaddyRefusesARelativeImportInsteadOfDroppingTheSite(t *testing.T) {
+	r, mainFile := importingCaddy(t, func(string) string { return "import conf.d/*.caddy" })
+
+	rev, err := r.apply(t, mainFile("# a harmless change\n"))
+	var imp *RelativeImportError
+	if !errors.Is(err, ErrRelativeImport) || !errors.As(err, &imp) || imp.Line == 0 {
+		t.Fatalf("Apply() error = %v, want ErrRelativeImport with a line", err)
+	}
+	if rev.Status != store.StatusFailed || r.onDisk(t) != mainFile("") {
+		t.Errorf("revision %+v: want failed and the file as it was", rev)
+	}
+	if got := r.serves(t); got != "imported" {
+		t.Errorf("the site answers %q after the refusal, want imported", got)
+	}
+}
+
+func TestRealCaddyKeepsTheImportedSiteWhenTheImportIsAbsolute(t *testing.T) {
+	r, mainFile := importingCaddy(t, func(dir string) string { return "import " + filepath.ToSlash(dir) + "/conf.d/*.caddy" })
+
+	rev, err := r.apply(t, mainFile("# a harmless change\n"))
+	if err != nil || rev.Status != store.StatusApplied {
+		t.Fatalf("Apply() = %+v, %v, want it applied", rev, err)
+	}
+	if got := r.serves(t); got != "imported" {
+		t.Errorf("the site answers %q after the apply, want imported", got)
+	}
 }

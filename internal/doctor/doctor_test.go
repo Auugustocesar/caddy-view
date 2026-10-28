@@ -207,10 +207,50 @@ func TestCheckImport(t *testing.T) {
 		{"glob that does not match the target", "import conf.d/*.conf\n", StatusWarn},
 		{"word starting with import is not the directive", "important.example.com {\n\trespond ok\n}\n", StatusWarn},
 		{"empty Caddyfile", "", StatusWarn},
+		{"absolute import of the managed file", "import /etc/caddy/conf.d/caddy-view-sites.caddy\n", StatusOK},
+		{"absolute glob that covers it", "import /etc/caddy/conf.d/*.caddy\n", StatusOK},
+		{"absolute import of another directory", "import /srv/other/*.caddy\n", StatusWarn},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assertStatus(t, CheckImport(tt.caddyfile, target), tt.want)
+			assertStatus(t, CheckImport(tt.caddyfile, "/etc/caddy", target), tt.want)
 		})
 	}
+}
+
+// caddy-view cannot apply a relative import faithfully, so the hint must not recommend one.
+func TestCheckImportHintGivesAnAbsolutePath(t *testing.T) {
+	got := CheckImport("", "/etc/caddy", "conf.d/caddy-view-sites.caddy")
+	if !strings.Contains(got.Hint, "import /etc/caddy/conf.d/*.caddy") {
+		t.Errorf("hint = %q, want it to recommend `import /etc/caddy/conf.d/*.caddy`", got.Hint)
+	}
+}
+
+func TestCheckRelativeImports(t *testing.T) {
+	tests := []struct {
+		name      string
+		caddyfile string
+		want      Status
+	}{
+		{"no imports", "example.com {\n\trespond ok\n}\n", StatusOK},
+		{"only absolute imports", "import /etc/caddy/conf.d/*.caddy\n", StatusOK},
+		{"a relative import", "{\n\tadmin off\n}\nimport conf.d/*.caddy\n", StatusWarn},
+		{"a relative import among absolute ones", "import /etc/caddy/a/*.caddy\nimport b/*.caddy\n", StatusWarn},
+		{"a commented out relative import", "# import conf.d/*.caddy\n", StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertStatus(t, CheckRelativeImports(tt.caddyfile, "/etc/caddy/Caddyfile"), tt.want)
+		})
+	}
+
+	t.Run("the warning names the import and gives the full path", func(t *testing.T) {
+		got := CheckRelativeImports("{\n}\nimport conf.d/*.caddy\n", "/etc/caddy/Caddyfile")
+		if !strings.Contains(got.Message, "conf.d/*.caddy") || !strings.Contains(got.Message, "3") {
+			t.Errorf("message = %q, want the pattern and the line", got.Message)
+		}
+		if !strings.Contains(got.Hint, "import /etc/caddy/conf.d/*.caddy") {
+			t.Errorf("hint = %q, want the same import with the full path", got.Hint)
+		}
+	})
 }

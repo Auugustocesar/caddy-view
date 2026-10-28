@@ -134,6 +134,13 @@ func (a *api) changeFailed(w http.ResponseWriter, r *http.Request, rev store.Rev
 			f.Error, f.Line = adaptErr.Message, adaptErr.Line
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, f)
+	case errors.Is(err, configmgr.ErrRelativeImport):
+		f := failureJSON{Error: err.Error(), Code: "relative-import"}
+		var relative *configmgr.RelativeImportError
+		if errors.As(err, &relative) {
+			f.Line = relative.Line
+		}
+		writeJSON(w, http.StatusUnprocessableEntity, f)
 	case errors.Is(err, configmgr.ErrAdminMoved):
 		writeJSON(w, http.StatusUnprocessableEntity, failureJSON{Error: err.Error(), Code: "admin-moved"})
 	case errors.Is(err, configmgr.ErrApplyFailed):
@@ -171,6 +178,11 @@ func (a *api) validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.opts.Editor.Validate(r.Context(), *body.Content)
+	var relative *configmgr.RelativeImportError
+	if errors.As(err, &relative) {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": relative.Error(), "line": relative.Line})
+		return
+	}
 	if errors.Is(err, configmgr.ErrInvalid) {
 		answer := map[string]any{"valid": false, "error": err.Error()}
 		var adaptErr *caddy.AdaptError

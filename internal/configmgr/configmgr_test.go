@@ -691,3 +691,79 @@ func TestRollbackAlsoKeepsTheAdminEndpointFromMoving(t *testing.T) {
 		t.Errorf("file = %q, want the content before the rollback", got)
 	}
 }
+
+const (
+	relativeImport = "import conf.d/*.caddy\nexample.com {\n\trespond \"hi\"\n}\n"
+	absoluteImport = "import /etc/caddy/conf.d/*.caddy\nexample.com {\n\trespond \"hi\"\n}\n"
+)
+
+func TestValidateRefusesARelativeImport(t *testing.T) {
+	e := newEnv(t, original)
+	_, err := e.mgr.Validate(context.Background(), relativeImport)
+	var imp *RelativeImportError
+	if !errors.Is(err, ErrRelativeImport) || !errors.As(err, &imp) || imp.Pattern != "conf.d/*.caddy" || imp.Line != 1 {
+		t.Fatalf("Validate() error = %v, want ErrRelativeImport for line 1 and conf.d/*.caddy", err)
+	}
+	if errors.Is(err, ErrInvalid) {
+		t.Errorf("a relative import is not a syntax error: %v", err)
+	}
+}
+
+func TestValidateReportsASyntaxErrorBeforeARelativeImport(t *testing.T) {
+	e := newEnv(t, original)
+	e.caddy.adaptErr = &caddy.AdaptError{Message: "Caddyfile:3: bad", Line: 3}
+	_, err := e.mgr.Validate(context.Background(), relativeImport)
+	if !errors.Is(err, ErrInvalid) || errors.Is(err, ErrRelativeImport) {
+		t.Errorf("Validate() error = %v, want only ErrInvalid", err)
+	}
+}
+
+func TestValidateAcceptsAnAbsoluteImport(t *testing.T) {
+	e := newEnv(t, original)
+	if _, err := e.mgr.Validate(context.Background(), absoluteImport); err != nil {
+		t.Errorf("Validate() error = %v, want it accepted", err)
+	}
+}
+
+func TestApplyRefusesARelativeImport(t *testing.T) {
+	e := newEnv(t, original)
+	rev, err := e.mgr.Apply(context.Background(), ApplyRequest{Content: relativeImport, BaseSHA256: sum(original)})
+	if !errors.Is(err, ErrRelativeImport) {
+		t.Fatalf("Apply() error = %v, want ErrRelativeImport", err)
+	}
+	if got := e.disk(t); got != original {
+		t.Errorf("file = %q, want the original untouched", got)
+	}
+	if len(e.caddy.loads) != 0 {
+		t.Errorf("caddy loaded %d times, want none", len(e.caddy.loads))
+	}
+	if rev.Status != store.StatusFailed || rev.Error == "" {
+		t.Errorf("revision = %+v, want failed with the reason", rev)
+	}
+}
+
+func TestApplyAcceptsAnAbsoluteImport(t *testing.T) {
+	e := newEnv(t, original)
+	if _, err := e.mgr.Apply(context.Background(), ApplyRequest{Content: absoluteImport, BaseSHA256: sum(original)}); err != nil {
+		t.Fatalf("Apply() error = %v, want it applied", err)
+	}
+	if got := e.disk(t); got != absoluteImport {
+		t.Errorf("file = %q, want the candidate", got)
+	}
+}
+
+func TestRollbackRefusesARevisionWithARelativeImport(t *testing.T) {
+	e := newEnv(t, original)
+	old, err := e.store.AddRevision(context.Background(), store.Revision{
+		Time: e.now, Trigger: store.TriggerManualEdit, Status: store.StatusApplied, Content: relativeImport, SHA256: sum(relativeImport),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.mgr.Rollback(context.Background(), old.Number); !errors.Is(err, ErrRelativeImport) {
+		t.Errorf("Rollback() error = %v, want ErrRelativeImport", err)
+	}
+	if got := e.disk(t); got != original || len(e.caddy.loads) != 0 {
+		t.Errorf("file = %q with %d loads, want nothing changed", got, len(e.caddy.loads))
+	}
+}

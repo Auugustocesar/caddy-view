@@ -94,8 +94,10 @@ func TestDoctorFlagErrors(t *testing.T) {
 
 func TestDoctorHealthySetup(t *testing.T) {
 	srv := fakeAdmin(t, goodConfig)
-	caddyfile := filepath.Join(t.TempDir(), "Caddyfile")
-	if err := os.WriteFile(caddyfile, []byte("import conf.d/*.caddy\n"), 0o600); err != nil {
+	dir := t.TempDir()
+	caddyfile := filepath.Join(dir, "Caddyfile")
+	// The import is absolute: caddy-view cannot apply a relative one faithfully, and doctor warns about it.
+	if err := os.WriteFile(caddyfile, []byte("import "+filepath.ToSlash(dir)+"/conf.d/*.caddy\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -103,7 +105,7 @@ func TestDoctorHealthySetup(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	for _, want := range []string{"[ ok ] admin-reachable", "[ ok ] metrics", "[ ok ] access-log", "[ ok ] import", "6 ok, 0 warnings, 0 failures"} {
+	for _, want := range []string{"[ ok ] admin-reachable", "[ ok ] metrics", "[ ok ] access-log", "[ ok ] import", "[ ok ] relative-import", "7 ok, 0 warnings, 0 failures"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("stdout does not contain %q:\n%s", want, stdout)
 		}

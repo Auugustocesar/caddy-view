@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 )
@@ -78,7 +79,8 @@ func checkCaddyfile(opts Options) []Result {
 	}
 	return []Result{
 		{ID: "caddyfile", Status: StatusOK, Message: fmt.Sprintf("read %s", opts.CaddyfilePath)},
-		CheckImport(string(data), managed),
+		CheckImport(string(data), filepath.Dir(opts.CaddyfilePath), managed),
+		CheckRelativeImports(string(data), opts.CaddyfilePath),
 	}
 }
 

@@ -223,6 +223,19 @@ func TestValidate(t *testing.T) {
 		}
 	})
 
+	t.Run("a relative import is an answer too, with its line", func(t *testing.T) {
+		e := newEditor()
+		e.validateErr = fmt.Errorf("validate: %w", &configmgr.RelativeImportError{Pattern: "conf.d/*.caddy", Line: 4})
+		rec := postJSON(t, editHandler(t, e), "/api/caddyfile/validate", `{"content":"x"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		got := fields(t, rec)
+		if got["valid"] != false || got["line"] != float64(4) || got["error"] == "" {
+			t.Errorf("answer = %v, want invalid with line 4 and the message", got)
+		}
+	})
+
 	t.Run("caddy unreachable is a bad gateway", func(t *testing.T) {
 		e := newEditor()
 		e.validateErr = caddy.ErrUnreachable
@@ -269,6 +282,11 @@ func TestApply(t *testing.T) {
 			name:   "rejected by caddy",
 			err:    fmt.Errorf("%w: %w", configmgr.ErrInvalid, &caddy.AdaptError{Message: "Caddyfile:5: bad", Line: 5}),
 			status: http.StatusUnprocessableEntity, code: "invalid", line: 5,
+		},
+		{
+			name:   "imports a file by a relative path",
+			err:    fmt.Errorf("apply: %w", &configmgr.RelativeImportError{Pattern: "conf.d/*.caddy", Line: 4}),
+			status: http.StatusUnprocessableEntity, code: "relative-import", line: 4,
 		},
 		{
 			name:   "would move the admin endpoint",

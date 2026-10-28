@@ -32,7 +32,8 @@ Checks that a Caddy setup has what caddy-view needs and tells you how to fix wha
 | `metrics` | `metrics` enabled on every HTTP server |
 | `access-log` | Access logs written to a file as JSON |
 | `caddyfile` | The Caddyfile can be read (with `--caddyfile`) |
-| `import` | The Caddyfile imports the file caddy-view manages (with `--caddyfile`) |
+| `import` | The Caddyfile imports the file caddy-view manages, by a relative or an absolute path (with `--caddyfile`) |
+| `relative-import` | The Caddyfile imports no file by a relative path (with `--caddyfile`). caddy-view refuses to apply such a Caddyfile, because Caddy would resolve the path from its own working directory and drop what is imported. Write it in full: `import /etc/caddy/conf.d/*.caddy` |
 
 ```
 $ caddy-view doctor --admin localhost:2019
@@ -125,6 +126,9 @@ An apply goes through these steps, and Caddy is never left with a configuration 
 1. If the file on disk is not the one the change was made from (`baseSha256`), nothing is recorded or written: someone
    else edited it.
 2. A revision is recorded, then Caddy checks the candidate (`/adapt`). A rejection stops here and says which line.
+   A candidate that imports a file by a relative path (`import conf.d/*.caddy`) is refused too: Caddy resolves that
+   path from its own working directory when it is sent the text, so the apply would drop what is imported. Write the
+   path in full (`import /etc/caddy/conf.d/*.caddy`), and `doctor` tells you when a Caddyfile has one.
 3. A candidate that would move or turn off Caddy's Admin API is refused, since caddy-view could then neither check nor
    undo anything.
 4. The file is replaced atomically and Caddy loads it. If Caddy refuses, the previous file is put back and reloaded.

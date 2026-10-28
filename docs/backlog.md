@@ -13,14 +13,14 @@ day, M a few days, L about a week.
 | When | Item | Size |
 |---|---|---|
 | Now (docs) | **B0** README and PLAN were out of date | S, done with this document |
-| Slice 3f, before phase 4 | **B1** what Caddy validates and loads must be what it loads from the file | M (starts with a spike) |
+| Slice 3f, before phase 4 | **B1** a relative `import` makes an apply drop the imported sites: refuse it, and fix `doctor` (spike done, confirmed; implemented) | M |
 | | **B2** resolve revisions left unfinished by a crash | M |
 | | **B3** verify the running config after `/load`, and check drift against the running Caddy | M (starts with a spike) |
 | | **B4** one apply at a time across processes | M |
 | Phase 4, slice 4a | **B5** a system status API, before any UI that shows it | M |
 | Phase 4 design | **B6** the options of a site, decided before the wizard | S (a decision, then code) |
 | Phase 5 | **B7** a health route and a `healthcheck` command for Docker | S |
-| | **B8** `doctor` checks permissions | S |
+| | **B8** `doctor` checks permissions (its relative-import check is done in B1) | S |
 | Phase 5, release | Rewrite the README for an open source audience (see "Decided not to do") | M |
 
 Slice 3f comes before phase 4 on purpose: B1 to B4 are about the promise of phase 3, that Caddy is never left broken,
@@ -33,31 +33,51 @@ and its package table listed `internal/metrics`, which became `internal/promtext
 fixed in the same change as this document. From here the README is kept up to date by hand with each change of flags
 or routes, until it is rewritten for the first release.
 
-## B1. What Caddy validates and loads is not necessarily what it loads from the file
+## B1. A relative `import` makes an apply drop the imported sites (confirmed, done)
 
-**Why.** The manager sends the Caddyfile text to `/adapt` and `/load`. Caddy gives that text no file name, so a
-relative `import` (the one `doctor` asks for: `import conf.d/*.caddy`) may resolve against Caddy's working directory
-instead of the Caddyfile's directory, which is what happens when Caddy starts from the file. If so, an apply could
-load something different from what a restart loads, or fail on a Caddyfile that restarts fine. The integration tests
-of 3e do not see this, because their Caddy runs inside the Caddyfile's directory. This is a suspicion to verify, not a
-known bug.
+**What the spike found.** The manager sends the Caddyfile text to `/adapt` and `/load`, and Caddy gives that text no file
+name. A relative `import` (the very one `doctor` recommends: `import conf.d/*.caddy`) is then resolved against Caddy's
+working directory instead of the Caddyfile's directory, which is what Caddy does when it starts from the file. The
+integration test `TestRealCaddyResolvesRelativeImportsFromTheCaddyfilesDirectory` ran this against Caddy 2.11.7, with
+Caddy started from another directory: at start the imported site was served; after a harmless change applied through
+the manager, **the apply reported success and the imported site was gone**. Caddy only logs "No files matching import
+glob pattern" and loads a configuration without it. It is the exact failure the manager exists to prevent, and it would
+hit every setup that follows `doctor`'s advice, including the managed `conf.d/caddy-view-sites.caddy` of phase 4.
 
-**Plan.**
-1. Spike, as an integration test: a Caddyfile with a relative `import`, a Caddy whose working directory is elsewhere;
-   apply through the manager and compare what is served with what a restart serves.
-2. If it is real, pick one of: the manager rewrites relative imports to absolute paths before adapting and loading
-   (the file on disk keeps the user's text); or it refuses a Caddyfile whose imports are relative, with a clear error;
-   or it points Caddy at the file instead of sending text. The spike decides, and `docs/phase-3.md` records the
-   choice.
-3. `doctor` warns about relative imports either way (see B8).
+**What was tried and does not work.** A `filename` parameter on the `Content-Type` of `/adapt` (`text/caddyfile;
+filename=/etc/caddy/Caddyfile`) has no effect: Caddy's admin API passes no options to the adapter. There is no admin
+endpoint that loads "the Caddyfile at this path".
 
-**Tests first.** The spike test itself, red against the current code if the suspicion is right; then unit tests of
-whatever rewriting or refusal is chosen.
+**Decision.** caddy-view refuses what it cannot apply faithfully:
+1. A new package `internal/caddyfile` finds the relative file imports of a Caddyfile text: `import` directives, outside
+   comments and heredocs, whose pattern is not absolute and looks like a file (it has a path separator, a glob
+   character or a dot) and is not a snippet defined in the text. A pattern that contains a placeholder (`{$DIR}/*`) is
+   left alone, since it cannot be known before Caddy expands it. Imports inside an imported file are Caddy's business:
+   it resolves them against that file's directory, correctly.
+2. `Validate` and `Apply` (so `Rollback` too) refuse a candidate with one, with `ErrRelativeImport` and the line, after
+   Caddy has accepted the syntax. The API answers `valid: false` for a validation and 422 with code `relative-import`
+   for an apply. Nothing is written or loaded; the revision is `failed` with the reason. The fix is to write the path in
+   full (`import /etc/caddy/conf.d/*.caddy`), which the editor can then apply.
+3. `doctor` stops recommending the relative form: its `import` check also accepts an absolute import of the managed
+   file (the directory comes from `--caddyfile`), its hint gives the absolute path, and a new `relative-import` check warns
+   about any relative file import in the Caddyfile. This is the relative-import part of B8, done here.
 
-**Also decided here: write order.** Today the file is written before `/load`, and restored if Caddy refuses it. The
+**Not done, on purpose.** Rewriting relative imports to absolute ones in memory before adapting would keep such setups
+working without a change to the file, but it means parsing Caddyfile text well enough to be right about snippets,
+arguments and nesting, and a wrong rewrite would be another silent change of what is loaded. A refusal that names the
+line is safer, and the scanner above errs towards refusing only what is certainly a file path. A relative import it
+does not recognise would still be dropped silently; the scanner's tests are meant to make that as unlikely as they can,
+and B3 (verify after `/load`) cannot catch it, since it would be verifying the wrong configuration.
+
+**Tests first.** Table-driven tests of the scanner; `Validate` and `Apply` against fakes (refused, absolute accepted,
+nothing written or loaded); the API mapping; the `doctor` checks; and the real-Caddy test above, which turns from
+showing the loss to showing the refusal, plus one that applies a change to a Caddyfile with an absolute import and sees
+the imported site still served.
+
+**Also decided here: write order.** Today the file is written before `/load` and restored if Caddy refuses it. The
 reference writes the file only after Caddy accepted the content, so a crash can never leave a file Caddy did not
-accept; a restart would then load a bad file. Our order is covered by B2 (the crash is detected and resolved at start),
-but whether to switch to accept-then-write is decided with the spike: it depends on what B1 finds about loading.
+accept. Our order stays for now: B2 detects and resolves a crash at start, and writing after `/load` would need Caddy to
+be given the text and the file to be written afterwards, with the same refusal risks. It can be revisited after B2.
 
 ## B2. Revisions left unfinished by a crash
 

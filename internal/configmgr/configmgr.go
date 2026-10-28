@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
+	"github.com/Auugustocesar/caddy-view/internal/caddyfile"
 	"github.com/Auugustocesar/caddy-view/internal/store"
 )
 
@@ -27,12 +28,31 @@ var (
 	// ErrAdminMoved means the candidate would move or turn off the Admin API that caddy-view reaches Caddy through.
 	// Loading it would leave Caddy running a configuration that caddy-view could neither check nor undo.
 	ErrAdminMoved = errors.New("the Caddyfile would move or turn off Caddy's admin endpoint")
+	// ErrRelativeImport means the candidate imports a file by a relative path. Caddy resolves such a path against its own
+	// working directory when it is given text through the Admin API, so the import could silently load nothing and drop
+	// the imported sites. The cause is a *RelativeImportError, with the line.
+	ErrRelativeImport = errors.New("the Caddyfile imports a file by a relative path")
 	// ErrApplyFailed means Caddy refused to load the candidate and the previous configuration was restored.
 	ErrApplyFailed = errors.New("caddy could not load the Caddyfile, the previous one was restored")
 	// ErrRecoveryRequired means the candidate failed to load and the previous Caddyfile could not be restored or
 	// reloaded either; the file and the running Caddy may disagree.
 	ErrRecoveryRequired = errors.New("the previous Caddyfile could not be restored, manual recovery is required")
 )
+
+// RelativeImportError is the cause of ErrRelativeImport.
+type RelativeImportError struct {
+	// Pattern is the path as written, and Line where its import is.
+	Pattern string
+	Line    int
+}
+
+func (e *RelativeImportError) Error() string {
+	return fmt.Sprintf("line %d imports %s by a relative path, which Caddy would resolve from its own working directory "+
+		"and not from the Caddyfile's, silently dropping what it imports: write the path in full", e.Line, e.Pattern)
+}
+
+// Is makes errors.Is(err, ErrRelativeImport) true for this error.
+func (e *RelativeImportError) Is(target error) bool { return target == ErrRelativeImport }
 
 // Caddy is what the Manager needs from the Admin API client.
 type Caddy interface {
@@ -143,6 +163,10 @@ func (m *Manager) Validate(ctx context.Context, content string) (*caddy.AdaptRes
 			return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
 		return nil, fmt.Errorf("validate the Caddyfile: %w", err)
+	}
+	// Caddy accepted the syntax; what it cannot do is resolve a relative import as it would from the file.
+	if imports := caddyfile.RelativeImports(content); len(imports) > 0 {
+		return nil, &RelativeImportError{Pattern: imports[0].Pattern, Line: imports[0].Line}
 	}
 	return res, nil
 }
