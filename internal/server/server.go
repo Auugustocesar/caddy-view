@@ -24,6 +24,12 @@ type Caddy interface {
 	Upstreams(ctx context.Context) ([]caddy.Upstream, error)
 }
 
+// The backup modes of Options.BackupMode, as /api/system says them.
+const (
+	BackupFull      = "full"
+	BackupSitesOnly = "sites-only"
+)
+
 // Options configures the handler.
 type Options struct {
 	// Endpoint is the Admin API address shown in /api/status.
@@ -49,6 +55,9 @@ type Options struct {
 	Database Database
 	// Retention is reported by /api/system when not nil.
 	Retention *Retention
+	// BackupMode is BackupFull (the default, also when empty) or BackupSitesOnly. In the sites-only mode the routes that
+	// write the Caddyfile do not exist.
+	BackupMode string
 	// CaddyfilePath is the file reported by /api/system under editing.
 	CaddyfilePath string
 	// Now gives the current time for the history routes. Zero means time.Now.
@@ -69,6 +78,17 @@ type api struct {
 	log   *slog.Logger
 	// streams holds one token per open log stream.
 	streams chan struct{}
+}
+
+// sitesOnly reports whether caddy-view runs in the sites-only backup mode, in which it never writes the Caddyfile.
+func (a *api) sitesOnly() bool { return a.opts.BackupMode == BackupSitesOnly }
+
+// backupMode is the mode as the API says it.
+func (a *api) backupMode() string {
+	if a.sitesOnly() {
+		return BackupSitesOnly
+	}
+	return BackupFull
 }
 
 var errNoAccessLog = errors.New("no access log found: configure a JSON file logger in Caddy or pass --access-log")
@@ -101,13 +121,17 @@ func New(c Caddy, opts Options) http.Handler {
 	if opts.Sites != nil {
 		routes["/api/managed-sites"] = onGet(a.sitesList).with(http.MethodPost, a.sitesCreate)
 		routes["/api/managed-sites/preview"] = onPost(a.sitesPreview)
-		routes["/api/managed-sites/import"] = onPost(a.sitesImport)
+		if !a.sitesOnly() {
+			routes["/api/managed-sites/import"] = onPost(a.sitesImport)
+		}
 	}
 	if opts.Editor != nil {
 		routes["/api/caddyfile"] = onGet(a.caddyfile)
-		routes["/api/caddyfile/validate"] = onPost(a.validate)
-		routes["/api/caddyfile/format"] = onPost(a.format)
-		routes["/api/caddyfile/apply"] = onPost(a.apply)
+		if !a.sitesOnly() {
+			routes["/api/caddyfile/validate"] = onPost(a.validate)
+			routes["/api/caddyfile/format"] = onPost(a.format)
+			routes["/api/caddyfile/apply"] = onPost(a.apply)
+		}
 		routes["/api/revisions"] = onGet(a.revisions)
 	}
 	return a.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

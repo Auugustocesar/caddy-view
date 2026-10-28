@@ -23,6 +23,8 @@
   let phase = $state('loading')
   let loadError = $state('')
   let path = $state('')
+  // In the sites-only backup mode caddy-view never writes the Caddyfile: it shows it, and the history is of the sites.
+  let sitesOnly = $state(false)
 
   let saved = $state({ content: '', sha256: '' })
   let draft = $state('')
@@ -47,7 +49,10 @@
   const canApply = $derived(dirty && check.state === 'valid' && !busy)
   const markedLine = $derived(failure?.line ? failure.line : check.state === 'invalid' ? check.line : 0)
   const changes = $derived(showChanges ? withContext(diffLines(saved.content, draft), CONTEXT) : [])
-  const currentRevision = $derived(revisions.find((r) => r.status === 'applied' && r.sha256 === saved.sha256)?.number)
+  // The Caddyfile is not versioned in the sites-only mode, so the newest applied revision is the state in force.
+  const currentRevision = $derived(
+    revisions.find((r) => r.status === 'applied' && (sitesOnly || r.sha256 === saved.sha256))?.number,
+  )
 
   const statusText = $derived.by(() => {
     if (!dirty) return notice || 'No changes'
@@ -94,6 +99,7 @@
         return
       }
       path = system.editing.caddyfile ?? ''
+      sitesOnly = system.editing.backupMode === 'sites-only'
       await readFile()
       phase = 'ready'
       readHistory()
@@ -110,7 +116,7 @@
   $effect(() => {
     const text = draft
     const id = ++latest
-    if (phase !== 'ready') return
+    if (phase !== 'ready' || sitesOnly) return
     if (text === saved.content) {
       check = { state: 'idle', error: '', line: 0, warnings: [] }
       return
@@ -236,17 +242,24 @@
 {:else if phase === 'loading'}
   <p class="empty">Loading…</p>
 {:else}
-  <div class="toolbar">
-    <button type="button" onclick={format} disabled={busy}>Format</button>
-    <button type="button" onclick={() => (showChanges = !showChanges)}>{showChanges ? 'Hide changes' : 'Show changes'}</button>
-    <button type="button" onclick={discard} disabled={!dirty || busy}>Discard changes</button>
-    <span class="spacer"></span>
-    <span class="status" role="status" data-state={dirty ? check.state : 'idle'}>{statusText}</span>
-    <button type="button" class="primary" onclick={apply} disabled={!canApply} aria-busy={busy}>Apply</button>
-  </div>
+  {#if sitesOnly}
+    <p class="note">
+      In the sites-only backup mode caddy-view never writes the Caddyfile and keeps no copy of it, so it is shown here to be
+      read. Edit it by hand; the history below is of the sites you add in the Sites tab.
+    </p>
+  {:else}
+    <div class="toolbar">
+      <button type="button" onclick={format} disabled={busy}>Format</button>
+      <button type="button" onclick={() => (showChanges = !showChanges)}>{showChanges ? 'Hide changes' : 'Show changes'}</button>
+      <button type="button" onclick={discard} disabled={!dirty || busy}>Discard changes</button>
+      <span class="spacer"></span>
+      <span class="status" role="status" data-state={dirty ? check.state : 'idle'}>{statusText}</span>
+      <button type="button" class="primary" onclick={apply} disabled={!canApply} aria-busy={busy}>Apply</button>
+    </div>
+  {/if}
 
   <div class="card editor">
-    <CodeEditor value={draft} label="Caddyfile editor" errorLine={markedLine} onchange={edit} />
+    <CodeEditor value={draft} label="Caddyfile editor" errorLine={markedLine} readonly={sitesOnly} onchange={edit} />
   </div>
 
   {#if dirty && check.warnings.length > 0}
@@ -295,9 +308,11 @@
               {#if rev.number === currentRevision}<span class="badge" data-status="current">current</span>{/if}
               <span class="detail">{when(rev.time)}</span>
               <span class="spacer"></span>
-              <button type="button" aria-label="Compare revision {rev.number} with the file" onclick={() => compare(rev.number)}>
-                Compare
-              </button>
+              {#if !sitesOnly}
+                <button type="button" aria-label="Compare revision {rev.number} with the file" onclick={() => compare(rev.number)}>
+                  Compare
+                </button>
+              {/if}
               {#if rev.status === 'applied' && rev.number !== currentRevision}
                 <button type="button" aria-label="Roll back to revision {rev.number}" disabled={busy} onclick={() => (confirming = rev.number)}>
                   Roll back
@@ -308,6 +323,7 @@
             {#if confirming === rev.number}
               <div class="confirm">
                 <p>Roll back to revision {rev.number}?</p>
+                {#if sitesOnly}<p class="note">This restores the managed sites of that revision. The Caddyfile is left as it is.</p>{/if}
                 {#if dirty}<p class="note">Your unsaved changes will be lost.</p>{/if}
                 <button type="button" class="primary" disabled={busy} onclick={() => rollBack(rev.number)}>Confirm roll back</button>
                 <button type="button" onclick={() => (confirming = null)}>Cancel</button>

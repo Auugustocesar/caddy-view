@@ -41,6 +41,11 @@ var (
 	// ErrRecoveryRequired means the candidate failed to load and the previous Caddyfile could not be restored or
 	// reloaded either; the file and the running Caddy may disagree.
 	ErrRecoveryRequired = errors.New("the previous Caddyfile could not be restored, manual recovery is required")
+	// ErrSitesOnly means the operation would write the Caddyfile, and caddy-view runs in the sites-only backup mode, in
+	// which it never does.
+	ErrSitesOnly = errors.New("caddy-view does not write the Caddyfile in the sites-only backup mode")
+	// ErrNothingToRestore means a rollback in the sites-only backup mode found no managed state in the revision.
+	ErrNothingToRestore = errors.New("the revision has no managed sites to restore")
 )
 
 // RelativeImportError is the cause of ErrRelativeImport.
@@ -95,6 +100,9 @@ type Options struct {
 	ManagedPath string
 	// AccessLog gives the access log file the sites may write to, or "" when none is known.
 	AccessLog func(ctx context.Context) string
+	// SitesOnly is the sites-only backup mode: the Manager never writes the Caddyfile and keeps no copy of it in the
+	// revisions, only the managed file and the rows.
+	SitesOnly bool
 }
 
 // File is the Caddyfile as it is on disk.
@@ -185,7 +193,7 @@ func (m *Manager) resolve(ctx context.Context, r store.Revision, cur File, curEr
 	switch {
 	case curErr != nil:
 		return store.StatusRecoveryRequired, fmt.Sprintf("interrupted, and the Caddyfile cannot be read now: %v", curErr)
-	case cur.SHA256 != r.SHA256:
+	case !m.opts.SitesOnly && cur.SHA256 != r.SHA256: // sites-only revisions hold no copy of the Caddyfile to compare
 		return store.StatusFailed, "interrupted; the Caddyfile was not changed to this revision"
 	}
 	if r.Sites != nil && m.opts.ManagedPath != "" {
@@ -313,6 +321,9 @@ func (m *Manager) Validate(ctx context.Context, content string) (*caddy.AdaptRes
 // revision is the record of this attempt, also when the error is not nil, unless the attempt never started
 // (ErrConflict, or the revision could not be stored).
 func (m *Manager) Apply(ctx context.Context, req ApplyRequest) (store.Revision, error) {
+	if m.opts.SitesOnly {
+		return store.Revision{}, ErrSitesOnly
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.apply(ctx, req)
@@ -329,6 +340,9 @@ func (m *Manager) Rollback(ctx context.Context, number int64) (store.Revision, e
 	cur, err := m.Current(ctx)
 	if err != nil {
 		return store.Revision{}, err
+	}
+	if m.opts.SitesOnly && (m.opts.ManagedPath == "" || old.Sites == nil) {
+		return store.Revision{}, fmt.Errorf("%w: revision %d", ErrNothingToRestore, number)
 	}
 	if m.opts.ManagedPath != "" && old.Sites != nil {
 		return m.rollbackManaged(ctx, old, cur)
@@ -348,7 +362,7 @@ func (m *Manager) Reconcile(ctx context.Context) (Drift, error) {
 	}
 	d := Drift{DiskSHA256: cur.SHA256}
 	d.Running, _ = m.runState(ctx, cur.Content) // an unknown answer says so itself; the reason is for Recover
-	if ok {
+	if ok && !m.opts.SitesOnly {                // the Caddyfile is not versioned in the sites-only mode: there is nothing to drift from
 		d.Known = true
 		d.Revision = rev.Number
 		d.Drifted = rev.SHA256 != cur.SHA256

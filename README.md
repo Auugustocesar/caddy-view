@@ -80,7 +80,7 @@ Always available, read-only:
 | `GET /api/traffic` | Requests, bytes, status classes and latency per minute or hour (`resolution`), with `from`, `to` and `host` |
 | `GET /api/hosts` | The same, totalled per host over a range (`resolution`, `from`, `to`), the busiest first; `limit` (100 by default, at most 500) |
 | `GET /api/summary` | Requests per second, 5xx rate, average and p95 latency, in flight and healthy upstreams over a `window` (`5m` to `7d`) |
-| `GET /api/system` | How caddy-view itself is doing: whether Caddy is reachable, the ingestion of the access log (file, offset, lines skipped, gaps, newest entry), the metrics scraper (`ok`, `pending`, `disabled` when Caddy has no `metrics`, or `failing`), the database (kind, file, size, schema version), the retention in force, and editing (whether it is on, and whether the Caddyfile and Caddy agree with the revisions) |
+| `GET /api/system` | How caddy-view itself is doing: whether Caddy is reachable, the ingestion of the access log (file, offset, lines skipped, gaps, newest entry), the metrics scraper (`ok`, `pending`, `disabled` when Caddy has no `metrics`, or `failing`), the database (kind, file, size, schema version), the retention in force, and editing (whether it is on, the backup mode, the managed file and whether the Caddyfile imports it, and whether the Caddyfile and Caddy agree with the revisions) |
 
 ```json
 {"sites":[{"server":"srv0","host":"app.example.com","upstreams":[{"address":"10.0.0.5:8080","numRequests":3,"fails":0}]}],"upstreamsAvailable":true}
@@ -91,13 +91,13 @@ Only with `--allow-edit` (a 404 otherwise):
 | Route | Answer |
 |---|---|
 | `GET /api/caddyfile` | The Caddyfile on disk and its SHA-256 |
-| `POST /api/caddyfile/validate` | Whether Caddy accepts a candidate, with the line of an error and any warnings |
+| `POST /api/caddyfile/validate` | Whether Caddy accepts a candidate, with the line of an error and any warnings (not in `--backup-mode sites-only`, like `format` and `apply`) |
 | `POST /api/caddyfile/format` | The text laid out as `caddy fmt` lays it out; reads nothing from Caddy or from disk |
 | `POST /api/caddyfile/apply` | Validates, writes and loads a candidate; undoes it when Caddy refuses it |
 | `GET /api/revisions`, `GET /api/revisions/{n}` | The history of attempts, newest first, and one with its content |
 | `POST /api/revisions/{n}/rollback` | Applies an earlier revision as a new one |
 | `GET /api/managed-sites`, `POST /api/managed-sites` | The sites caddy-view manages (with the managed file, whether the Caddyfile imports it, and whether an access log is known), and creating one (see "Managed sites") |
-| `POST /api/managed-sites/import` | Adds the missing `import` of the managed file to the Caddyfile, as a revision of its own |
+| `POST /api/managed-sites/import` | Adds the missing `import` of the managed file to the Caddyfile, as a revision of its own (not in `--backup-mode sites-only`) |
 | `POST /api/managed-sites/preview` | Checks a site and shows the managed file it would produce, without applying |
 | `PUT /api/managed-sites/{id}`, `DELETE /api/managed-sites/{id}` | Changing and removing a managed site |
 
@@ -119,6 +119,7 @@ Flags:
 | `--caddyfile` | none | The Caddyfile caddy-view may edit; used with `--allow-edit` |
 | `--allow-edit` | off | Let the API read and change the Caddyfile. Needs `--caddyfile` and the history database (not `--no-persist`) |
 | `--managed-file` | `conf.d/caddy-view-sites.caddy` | The file the managed sites are written to, relative to the directory of the Caddyfile unless it is an absolute path. The Caddyfile must import it by its full path |
+| `--backup-mode` | `full` | `full`: every revision keeps the Caddyfile, so it can be restored. `sites-only`: caddy-view never writes the Caddyfile and keeps no copy of it (it can hold tokens and passwords); only the managed file and the list of sites are versioned and rolled back, you add the `import` line by hand, and the Caddyfile tab is read-only. Needs `--allow-edit` |
 
 ### Editing the Caddyfile
 

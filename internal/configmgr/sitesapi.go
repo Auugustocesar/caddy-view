@@ -264,7 +264,11 @@ func (m *Manager) ApplySites(ctx context.Context, desired []store.Site) (store.R
 
 // rollbackManaged restores a revision that has managed state: the Caddyfile, the managed file as it was, and the rows.
 func (m *Manager) rollbackManaged(ctx context.Context, old store.Revision, cur File) (store.Revision, error) {
-	if imports := caddyfile.RelativeImports(old.Content); len(imports) > 0 {
+	main := old.Content
+	if m.opts.SitesOnly {
+		main = cur.Content // the Caddyfile is the person's: only the managed state goes back
+	}
+	if imports := caddyfile.RelativeImports(main); len(imports) > 0 {
 		return store.Revision{}, &RelativeImportError{Pattern: imports[0].Pattern, Line: imports[0].Line}
 	}
 	prev, err := m.checkManagedBase(ctx)
@@ -278,7 +282,7 @@ func (m *Manager) rollbackManaged(ctx context.Context, old store.Revision, cur F
 	if again := sites.Generate(rows, m.siteOptions(ctx)); again.Text == old.Sites.Content {
 		out = again
 	}
-	return m.applyManaged(ctx, plan{trigger: store.TriggerRollback, main: old.Content, rows: rows, out: out}, cur, prev)
+	return m.applyManaged(ctx, plan{trigger: store.TriggerRollback, main: main, rows: rows, out: out}, cur, prev)
 }
 
 // plan is a change of the managed state: the managed file and rows to have, and the Caddyfile text to have, which is
@@ -294,8 +298,13 @@ type plan struct {
 // what runs, and saves the rows. The caller holds m.mu and has checked what can be checked without a revision.
 func (m *Manager) applyManaged(ctx context.Context, p plan, cur File, prev managedFile) (store.Revision, error) {
 	text := p.out.Text
+	// The sites-only mode keeps no copy of the Caddyfile: it may hold tokens and passwords.
+	kept := p.main
+	if m.opts.SitesOnly {
+		kept = ""
+	}
 	rev, err := m.store.AddRevision(ctx, store.Revision{
-		Time: m.now(), Trigger: p.trigger, Status: store.StatusPending, Content: p.main, SHA256: digest(p.main),
+		Time: m.now(), Trigger: p.trigger, Status: store.StatusPending, Content: kept, SHA256: digest(kept),
 		Sites: &store.RevisionSites{Content: text, SHA256: digest(text), Snapshot: p.rows},
 	})
 	if err != nil {

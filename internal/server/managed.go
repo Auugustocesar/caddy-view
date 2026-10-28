@@ -194,6 +194,7 @@ func (a *api) sitesList(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sites": out, "managedFile": state.File, "imported": state.Imported, "accessLog": state.AccessLog,
+		"backupMode": a.backupMode(),
 	})
 }
 

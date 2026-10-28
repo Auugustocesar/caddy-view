@@ -10,8 +10,8 @@
   /** @type {'loading'|'off'|'ready'|'failed'} */
   let phase = $state('loading')
   let loadError = $state('')
-  /** @type {{sites: Array<any>, managedFile: string, imported: boolean, accessLog: boolean}} */
-  let data = $state({ sites: [], managedFile: '', imported: true, accessLog: false })
+  /** @type {{sites: Array<any>, managedFile: string, imported: boolean, accessLog: boolean, backupMode: string}} */
+  let data = $state({ sites: [], managedFile: '', imported: true, accessLog: false, backupMode: 'full' })
   /** @type {{sites: Array<{server: string, host: string, upstreams: Array<{address: string}>}>} | null} */
   let running = $state(null)
   let runningError = $state('')
@@ -122,8 +122,13 @@
         <p>
           The Caddyfile does not import the file caddy-view writes its sites to, so a site added here would never be served.
         </p>
-        <p><code>{data.managedFile}</code></p>
-        <button type="button" class="primary" onclick={addTheImport} disabled={busy}>Add the import</button>
+        {#if data.backupMode === 'sites-only'}
+          <p>caddy-view does not write the Caddyfile in the sites-only backup mode. Add this line to it yourself:</p>
+          <p><code>import {data.managedFile}</code></p>
+        {:else}
+          <p><code>{data.managedFile}</code></p>
+          <button type="button" class="primary" onclick={addTheImport} disabled={busy}>Add the import</button>
+        {/if}
       </section>
     {/if}
 

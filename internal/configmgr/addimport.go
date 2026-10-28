@@ -47,6 +47,9 @@ func (m *Manager) ManagedState(ctx context.Context) (ManagedState, error) {
 // Caddy refuses to import a file that is not there, so a missing managed file is created empty, which is a state
 // ApplySites may overwrite. When the apply fails, a file created here is removed again.
 func (m *Manager) AddImport(ctx context.Context) (store.Revision, error) {
+	if m.opts.SitesOnly {
+		return store.Revision{}, ErrSitesOnly
+	}
 	if m.opts.ManagedPath == "" {
 		return store.Revision{}, ErrNoManagedFile
 	}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatClock, formatCount, formatDay, formatMs, formatPercent, formatStamp } from './format.js'
+import { formatBytes, formatClock, formatCount, formatDay, formatDuration, formatMs, formatPercent, formatStamp } from './format.js'
 
 describe('formatCount', () => {
   it.each([
@@ -84,4 +84,16 @@ describe('formatDay and formatStamp', () => {
     expect(formatDay(when.toISOString())).toBe('28 Oct')
     expect(formatStamp(when.toISOString())).toBe('28 Oct 22:30')
   })
+})
+
+describe('formatDuration', () => {
+  it.each([
+    [0, 'for ever'],
+    [86400, '1 day'],
+    [14 * 86400, '14 days'],
+    [36 * 3600, '36 hours'],
+    [3600, '1 hour'],
+    [90 * 60, '90 minutes'],
+    [45, '45 seconds'],
+  ])('shows %s seconds as %s', (seconds, want) => expect(formatDuration(seconds)).toBe(want))
 })

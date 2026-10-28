@@ -100,8 +100,14 @@ type history interface {
 }
 
 // checkEditFlags refuses an --allow-edit that could not be done safely. The messages name the flags.
-func checkEditFlags(allowEdit bool, caddyfile string, noPersist bool) error {
+func checkEditFlags(allowEdit bool, caddyfile string, noPersist bool, backupMode string) error {
+	if backupMode != server.BackupFull && backupMode != server.BackupSitesOnly {
+		return fmt.Errorf("invalid --backup-mode %q: use %s or %s", backupMode, server.BackupFull, server.BackupSitesOnly)
+	}
 	if !allowEdit {
+		if backupMode == server.BackupSitesOnly {
+			return errors.New("invalid --backup-mode: sites-only is a way of editing, so it needs --allow-edit")
+		}
 		return nil
 	}
 	switch {
@@ -136,12 +142,15 @@ func (e editor) Revisions(ctx context.Context, q store.RevisionQuery) ([]store.R
 
 // newEditor builds the editor for --allow-edit and warns about what that allows and about a Caddyfile that was
 // changed behind caddy-view's back.
-func newEditor(ctx context.Context, client *caddy.Client, hist history, path, managedPath, accessLog string, logger *slog.Logger) editor {
+func newEditor(ctx context.Context, client *caddy.Client, hist history, path, managedPath, accessLog string, sitesOnly bool, logger *slog.Logger) editor {
 	mgr := configmgr.New(client, hist, configmgr.Options{
-		Path: path, ManagedPath: managedPath, Logger: logger,
+		Path: path, ManagedPath: managedPath, Logger: logger, SitesOnly: sitesOnly,
 		AccessLog: func(ctx context.Context) string { return accessLogOf(ctx, client, accessLog) },
 	})
 	logger.Warn("--allow-edit is on: whoever can reach this address can change Caddy's configuration", "caddyfile", path)
+	if sitesOnly {
+		logger.Info("--backup-mode sites-only: the Caddyfile is never written and no copy of it is kept; only the managed sites are versioned")
+	}
 	// First resolve what a crash left unfinished, so that what follows compares against the truth.
 	if _, err := mgr.Recover(ctx); err != nil {
 		logger.Warn("cannot resolve the revisions a crash left unfinished", "caddyfile", path, "error", err)
@@ -215,6 +224,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	caddyfile := fs.String("caddyfile", "", "path to the Caddyfile caddy-view may edit; used with --allow-edit")
 	managedFile := fs.String("managed-file", "conf.d/caddy-view-sites.caddy", "file caddy-view writes the sites it manages to, relative to the Caddyfile directory; the Caddyfile must import it by its full path")
 	allowEdit := fs.Bool("allow-edit", false, "let the UI and API read and change the Caddyfile; needs --caddyfile and the history database")
+	backupMode := fs.String("backup-mode", server.BackupFull, "what the history keeps of the Caddyfile: full, or sites-only, where caddy-view never writes the Caddyfile and keeps no copy of it; needs --allow-edit")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -246,7 +256,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	if err := checkEditFlags(*allowEdit, *caddyfile, *noPersist); err != nil {
+	if err := checkEditFlags(*allowEdit, *caddyfile, *noPersist, *backupMode); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
@@ -285,8 +295,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	opts.Ingest, opts.Scrape = ingestion, scraper
 	if *allowEdit {
 		path, managed := editPaths(*caddyfile, *managedFile)
-		ed := newEditor(ctx, client, hist, path, managed, *accessLog, logger)
-		opts.Editor, opts.Sites, opts.CaddyfilePath = ed, ed, path
+		sitesOnly := *backupMode == server.BackupSitesOnly
+		ed := newEditor(ctx, client, hist, path, managed, *accessLog, sitesOnly, logger)
+		opts.Editor, opts.Sites, opts.CaddyfilePath, opts.BackupMode = ed, ed, path, *backupMode
 	}
 	handler := server.New(client, opts)
 	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.

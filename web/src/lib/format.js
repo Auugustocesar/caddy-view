@@ -59,3 +59,19 @@ export function formatDay(when) {
 export function formatStamp(when) {
   return `${formatDay(when)} ${formatClock(when)}`
 }
+
+/** A length of time in the largest whole unit that holds it, such as "14 days"; "for ever" for zero. @param {number} seconds @returns {string} */
+export function formatDuration(seconds) {
+  if (!seconds) return 'for ever'
+  const units = [
+    [86400, 'day'],
+    [3600, 'hour'],
+    [60, 'minute'],
+  ]
+  for (const [size, name] of units) {
+    if (seconds % size === 0) return plural(seconds / size, name)
+  }
+  return plural(seconds, 'second')
+}
+
+const plural = (n, name) => `${n} ${name}${n === 1 ? '' : 's'}`

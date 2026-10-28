@@ -85,10 +85,14 @@ type retentionJSON struct {
 }
 
 type editingJSON struct {
-	Enabled   bool       `json:"enabled"`
-	Caddyfile string     `json:"caddyfile,omitempty"`
-	Drift     *driftJSON `json:"drift,omitempty"`
-	Error     string     `json:"error,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	Caddyfile string `json:"caddyfile,omitempty"`
+	// BackupMode is "full" or "sites-only"; ManagedFile and Imported say where the managed sites are written, when they are.
+	BackupMode  string     `json:"backupMode,omitempty"`
+	ManagedFile string     `json:"managedFile,omitempty"`
+	Imported    *bool      `json:"imported,omitempty"`
+	Drift       *driftJSON `json:"drift,omitempty"`
+	Error       string     `json:"error,omitempty"`
 }
 
 type driftJSON struct {
@@ -160,7 +164,14 @@ func (a *api) system(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.opts.Editor != nil {
-		out.Editing = editingJSON{Enabled: true, Caddyfile: a.opts.CaddyfilePath}
+		out.Editing = editingJSON{Enabled: true, Caddyfile: a.opts.CaddyfilePath, BackupMode: a.backupMode()}
+		if a.opts.Sites != nil {
+			if state, err := a.opts.Sites.ManagedState(ctx); err != nil {
+				a.log.Error("system status: cannot read the managed state", "error", err)
+			} else {
+				out.Editing.ManagedFile, out.Editing.Imported = state.File, &state.Imported
+			}
+		}
 		drift, err := a.opts.Editor.Reconcile(ctx)
 		if err != nil {
 			a.log.Error("system status: cannot compare the Caddyfile with its revisions", "error", err)

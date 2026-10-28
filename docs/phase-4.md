@@ -5,7 +5,7 @@ be created from it. The interface is designed and built once, here, with the des
 (`docs/PLAN.md`, phase 4; the decision is in `docs/backlog.md`).
 
 Everything here is built tests first (`docs/PLAN.md`, section 11). **This document was written before any code and has
-been reviewed; one question is still open (3, at the end).** Nothing in it is implemented yet.
+been reviewed, and every slice below is done.**
 
 ## What exists, what is missing
 
@@ -184,7 +184,7 @@ all saying that nothing was applied and the table is unchanged: `invalid-site` (
 and Caddy's message and line; and the existing `relative-import`, `apply-failed`, `recovery-required` and `conflict`.
 
 **`serve`** gets `--managed-file` (default `conf.d/caddy-view-sites.caddy`, relative to the Caddyfile's directory, as in
-`doctor`) and gives the manager the access log path. `--backup-mode` waits for 4h.
+`doctor`) and gives the manager the access log path. `--backup-mode` came with 4h.
 
 **Tests.** Against fakes for the pure parts, the stores and the manager, as before; then against a real Caddy: a site
 created through the manager is served and reaches a real backend, a hostname the hand-written Caddyfile already serves is
@@ -558,6 +558,65 @@ password. Then the browser.
 - A hash in the managed file is as sensitive as any `basic_auth` in a Caddyfile: the file keeps the mode it has, and keeping
   it readable only by the user of Caddy is up to whoever installs it (it is in the README's security notes).
 
+### Slice 4h in detail
+
+Two things: the Config tab becomes a status page, and `--backup-mode sites-only` exists.
+
+**`--backup-mode`** is `full` (the default, what there is) or `sites-only`, and needs `--allow-edit` like everything that
+changes Caddy. In `sites-only` caddy-view never writes the hand-written Caddyfile and never keeps a copy of it:
+- `Manager.Apply` and `AddImport` refuse with `ErrSitesOnly`. The routes that only make sense for a Caddyfile that
+  caddy-view writes are a 404: `POST /api/caddyfile/{validate,format,apply}` and `POST /api/managed-sites/import`.
+  `GET /api/caddyfile` stays (the tab shows the file) and so do the revision routes.
+- `ApplySites` works as before and still reads the Caddyfile to have Caddy adapt and load it, but the revision it records
+  has no Caddyfile: its `Content` is empty. That is the point of the mode: the copy of the Caddyfile in the database can
+  hold tokens and passwords. A test puts a secret in the Caddyfile and looks for it in every revision.
+- `Rollback(n)` restores the managed file and the rows of a revision that has them, and leaves the Caddyfile as it is now,
+  even when it changed since; a revision with no managed state has nothing to restore (`ErrNothingToRestore`). Revisions made
+  in `full` mode before the switch can be rolled back to for their managed part.
+- `Recover` does not compare the Caddyfile with the revision (there is no copy); it compares the managed file and asks
+  Caddy, as before. `Reconcile` has nothing to compare the Caddyfile with, so the drift is not known (`known: false`); what
+  Caddy runs is still checked.
+- The Sites tab cannot add the import (it is a change of the Caddyfile): it says which line to add. The Caddyfile tab shows
+  the file read-only and says why; its history is the history of the managed sites, with Roll back for those.
+
+**The status API** says what the Config tab needs of editing: `editing.backupMode` (`full` or `sites-only`),
+`editing.managedFile` and `editing.imported`, and `GET /api/managed-sites` carries `backupMode` too, so the Sites tab knows
+whether it may offer the import.
+
+**The Config tab** shows, from `/api/system`, a card each for: Caddy (reachable, the Admin API address); Editing (on or off,
+the Caddyfile, the backup mode in words, the managed file and whether the Caddyfile imports it, whether the file is the
+newest applied revision and whether Caddy runs it); the access log (what ingestion does, the file, the newest entry, gaps and
+skipped lines); the metrics scraper (its state, and that `metrics` is not enabled in Caddy when that is so); the database
+(kind, file, size, schema); and the retention. A section the answer leaves out has no card, and a section with an `error`
+shows it. Below, as before, the running configuration with its Copy button. The status is read once when the tab opens
+and has a Refresh button; it does not poll.
+
+**Tests.** The manager against fakes (each rule above); the routes and the status answer; the flag; a real Caddy in
+`sites-only` (a site is served, the Caddyfile on disk is byte for byte what it was, and no revision holds it); the cards of the
+Config tab; the read-only Caddyfile tab and the Sites tab without the import button. Then the browser.
+
+**Done, and what was checked.** Manager tests for each rule above (12, red first for the right reasons), the routes and the
+status answer, the flag (an unknown value, `sites-only` without `--allow-edit`, the whole run through `serve`), the Config
+cards, the read-only Caddyfile tab and the Sites tab; and, with `-tags integration`, a real Caddy 2.11.7 behind a
+`sites-only` manager: two sites served, the hand-written site still served, a rollback back to the first, and the Caddyfile
+byte for byte as it was with no revision holding it. In a browser against a real `serve --backup-mode sites-only`: the
+Config tab shows every card, the Caddyfile tab is read-only with no button, and `POST /api/managed-sites` answered 308 from
+Caddy while the Caddyfile hash did not change and revision 1 had empty `content`.
+Decisions made on the way: a revision made in `sites-only` has `Content` empty and the digest of nothing, so `Recover`
+does not compare the Caddyfile with it; the newest applied revision is the one marked current in the history of that mode;
+`POST /api/managed-sites/import` is a 404 in `sites-only`, but because `import` also reads as the ID of a managed site the
+answer is a 405 (no `POST` route either way); a `full` revision rolled back to in `sites-only` restores only its managed part.
+Known and left: the status is read once, with a Refresh button, and does not poll; and a managed file with leftovers of an
+earlier caddy-view (an empty history database) is refused with `managed-file-edited` until it is emptied, as documented.
+
+## Phase 4 as a whole
+
+Every slice is done: the design system and shell (4c), the Caddyfile editor (4d), the Sites tab (4e), Metrics and log
+history (4f), basic auth (4g), and the Config tab with `sites-only` (4h). Left for later, on purpose: the "Defined in" badge
+matches by hostname only; "Load more" on an exactly full last page returns nothing; `govulncheck` reports GO-2026-5932 in
+`golang.org/x/crypto` (no fix yet, and the code does not call it); login, the health route, `doctor` permission checks,
+Docker and the release belong to phase 5.
+
 ## Slices
 
 The backend of managed sites comes first, because it is the part with real risk and it is checked against a real Caddy;
@@ -572,7 +631,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 | 4e | Sites tab and the wizard, including "add the import" (done) | Creating a reverse proxy from the browser works against a real Caddy |
 | 4f | Metrics tab and Logs history search (done) | Charts match `/api/traffic`; a search finds a stored request |
 | 4g | Basic auth: bcrypt in-process, the field in the wizard, the generated `basic_auth` block (done) | A real Caddy asks for the password of a site and accepts the right one; the password is stored nowhere |
-| 4h | Config tab; `--backup-mode sites-only` if question 3 is answered yes | The tab shows what `/api/system` says |
+| 4h | Config tab; `--backup-mode sites-only` (done) | The tab shows what `/api/system` says; a real Caddy in `sites-only` serves sites and the Caddyfile stays byte for byte |
 
 
 ## Answers to the review
@@ -586,11 +645,11 @@ the interface then is built on APIs that exist and are tested, as for the histor
 5. **Real-browser checks** of every UI slice in light, dark and phone width; no Playwright in CI for now.
 6. **The access log path is discovered from the running Caddy**, as ingestion does; `--access-log` still wins when given.
 
-## Still open
+## Answered at the end
 
-3. **`--backup-mode sites-only`.** In the default mode, `full`, every revision keeps a copy of the whole hand-written
+3. **`--backup-mode sites-only`: yes, as 4h.** In the default mode, `full`, every revision keeps a copy of the whole hand-written
    Caddyfile in the database, so that a rollback can restore it. That copy can hold secrets (tokens, passwords) and it lets
    caddy-view rewrite a file the user wrote by hand. `sites-only` is for people who do not want that: caddy-view then
    only ever writes the managed file, keeps revisions of the managed file alone, and the Caddyfile tab only shows the
    file. The cost is one more code path and its tests. Proposed: keep it in this phase, as the last item (4h), so that it
-   can slip past v1 without holding anything else; the default stays `full`.
+   can slip past v1 without holding anything else; the default stays `full`. It did not slip: it is in (see "Slice 4h in detail").

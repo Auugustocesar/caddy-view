@@ -9,8 +9,8 @@
   import { caddyfileTokenizer } from '../lib/caddyfile-language.js'
   import { cspNonce } from '../lib/nonce.js'
 
-  /** @type {{value: string, label: string, errorLine?: number, onchange?: (text: string) => void}} */
-  let { value, label, errorLine = 0, onchange = () => {} } = $props()
+  /** @type {{value: string, label: string, errorLine?: number, readonly?: boolean, onchange?: (text: string) => void}} */
+  let { value, label, errorLine = 0, readonly = false, onchange = () => {} } = $props()
 
   // Changes the page makes (a new value, a formatted text) are not edits and are not reported.
   const fromOutside = Annotation.define()
@@ -95,6 +95,9 @@
         syntaxHighlighting(highlighting),
         errorLineField,
         theme,
+        // Fixed when the editor is made: a page shows the file either to edit or to read.
+        EditorState.readOnly.of(untrack(() => readonly)),
+        EditorView.editable.of(!untrack(() => readonly)),
         EditorView.cspNonce.of(cspNonce()),
         keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.contentAttributes.of({ 'aria-label': untrack(() => label) }),

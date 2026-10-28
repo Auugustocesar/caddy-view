@@ -117,6 +117,8 @@ The user chooses how much the UI keeps, via `--backup-mode` (or the config file)
 
 In both modes `conf.d/caddy-view-sites.caddy` can be regenerated from the `sites` table.
 
+In `sites-only` a revision has no Caddyfile text (so no secret of it reaches the database), the Caddyfile routes that write (`validate`, `format`, `apply`, `import`) do not exist, a rollback restores the managed file and the rows and loads the Caddyfile as it is now, and drift of the Caddyfile is not reported. Details: `docs/phase-4.md`, slice 4h.
+
 ## 6. Apply flow
 
 1. Create a revision (`pending`) with the candidate content.
