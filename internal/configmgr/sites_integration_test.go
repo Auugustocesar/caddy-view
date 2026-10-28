@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Auugustocesar/caddy-view/internal/sites"
 	"github.com/Auugustocesar/caddy-view/internal/store"
 )
 
@@ -68,6 +69,9 @@ func backend(t *testing.T, answer string) string {
 	t.Cleanup(srv.Close)
 	return strings.TrimPrefix(srv.URL, "http://")
 }
+
+// sitesText is the managed file for the sites, as a test that does not care about options expects it.
+func sitesText(all ...store.Site) string { return generated(sites.Options{}, all...) }
 
 func httpSite(id, host, upstream string) store.Site {
 	return store.Site{ID: id, Hostname: host, Kind: store.SiteProxy, Upstreams: []string{upstream}, TLS: store.TLSOff, Enabled: true}

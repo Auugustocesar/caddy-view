@@ -601,6 +601,3 @@ func TestSitesAreTheStoresRows(t *testing.T) {
 		t.Errorf("Sites() = %v, %v, want a.example.com", hostsOf(got), err)
 	}
 }
-
-// sitesText is the managed file for the sites, as a test that does not care about options expects it.
-func sitesText(all ...store.Site) string { return generated(sites.Options{}, all...) }
