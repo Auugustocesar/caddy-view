@@ -7,7 +7,6 @@ Goal: a web UI that observes Caddy and never changes it. It works against the te
 lists the real sites and upstreams, and the Logs tab streams live traffic. The check found one bug, fixed with tests:
 Caddy 2.10 and later adapt `metrics` to the whole HTTP app instead of each server, so `doctor` now accepts both.
 
-**Status: done.** All slices below were built tests first and checked against the test Caddy (Caddy 2.11.7, with `metrics` and a JSON access log enabled): `doctor` is green apart from the deliberate LAN-open Admin API, the UI lists the real sites and upstreams, and the Logs tab streams live traffic. The check found one bug, fixed with tests: Caddy 2.10 and later adapt `metrics` to the whole HTTP app, not to each server, and `doctor` now accepts both.
 
 Everything here is built tests first (see `docs/PLAN.md`, section 11).
 

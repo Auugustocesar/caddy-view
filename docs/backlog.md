@@ -148,7 +148,7 @@ real, on Windows here and on Linux and macOS in CI. `store.SQLiteURI` is the one
 URI, shared with the history store. It refuses a symbolic link at the lock path. `serve --allow-edit` exits with code 1
 and names the Caddyfile when the lock is taken; without `--allow-edit` nothing is locked.
 
-## B5. A system status API (phase 4, slice 4a)
+## B5. A system status API (phase 4, slice 4a; proposed in `docs/phase-4.md`)
 
 **Why.** The PLAN's Config tab shows database usage, and the reference has cards for Caddy and for ingestion. The data
 exists (cursor with skipped lines and gaps, store size, schema version, retention policy, scraper state) but no route
@@ -167,7 +167,7 @@ the redirect code); TLS automatic or off; enabled; "skip TLS verification" for a
 a bcrypt hash (the password is never stored); an access-log snippet imported per site; strict hostname and upstream
 validation. Multiple upstreams with load balancing is ours, not theirs.
 
-**Plan.** `docs/phase-4.md` decides which of these are in v1, and each decision names its generated Caddyfile text. Basic
+**Plan.** `docs/phase-4.md` (proposed, to review) decides which of these are in v1, and each decision names its generated Caddyfile text. Basic
 auth would add `golang.org/x/crypto` for bcrypt: a dependency that needs its reason written down, as `CLAUDE.md` asks.
 
 ## B7. Health route and `healthcheck` command (phase 5)

@@ -194,7 +194,7 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 | 2 | SQLite, log ingestion with cursor, metrics scraper | Restarting the UI loses no logs or metrics |
 | 3 | Caddyfile edit, validate, apply, rollback (API; slices 3a to 3e done) | An invalid config never leaves Caddy broken |
 | 3f | Hardening of the apply flow, done: refuse relative imports, crash recovery, verify after load, one apply across processes (`docs/backlog.md`, B1 to B4) | Each has a failing test first and a real-Caddy check where it applies |
-| 4 | Sites wizard, rollup charts, and the whole front end for history and editing (Caddyfile tab, log search tab, dashboard summary, design pass) | Creating a reverse proxy from the UI works |
+| 4 | Sites wizard, rollup charts, and the whole front end for history and editing (Caddyfile tab, log search tab, dashboard summary, design pass); proposal in `docs/phase-4.md` | Creating a reverse proxy from the UI works |
 | 5 | Full login, release, Docker, docs | Fresh-machine install takes minutes |
 
 MVP is phases 0 to 3, but the editing of phase 3 has no interface until phase 4: today it is used through the API.
