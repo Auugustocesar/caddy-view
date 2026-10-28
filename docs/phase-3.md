@@ -137,6 +137,7 @@ The fakes of 3a prove the state machine; only a real Caddy proves that it matche
 | 3c | HTTP: `GET /api/caddyfile`, `POST /api/caddyfile/validate`, `POST /api/caddyfile/apply`, `GET /api/revisions[/{n}]`, `POST /api/revisions/{n}/rollback`; `serve --caddyfile` and `--allow-edit` | Routes are a 404 without `--allow-edit`; the API tests and the serve test pass |
 | 3d | Moved to phase 4: the Caddyfile tab (editor, validation, diff, apply, history, rollback). The API of 3c is complete without it | |
 | 3e | The admin guard (`ErrAdminMoved`, with fakes), then integration against a real Caddy: invalid candidate, failing `/load`, rollback, an edit made outside, a moved admin endpoint | The guard tests pass with `-race`; an invalid config never leaves Caddy broken, checked against a real Caddy in CI |
+| 3f | Hardening, from `docs/backlog.md`: B1 (what Caddy loads is what the file says, with a spike first), B2 (crash recovery of unfinished revisions), B3 (verify after `/load` and live drift, with a spike first), B4 (one apply across processes) | Each has a failing test first; B1 and B3 are checked against a real Caddy |
 
 ## Open questions
 

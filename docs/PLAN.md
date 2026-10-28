@@ -3,8 +3,11 @@
 A lightweight web UI that runs next to [Caddy](https://caddyserver.com): see status, metrics and logs, edit the
 Caddyfile safely, and manage reverse proxies.
 
-Status: phase 0 complete (Admin API client, `doctor` command and CI); phase 1 is next. This document is the source
-of truth for scope and design; update it when a decision changes.
+Status: phases 0 to 3 are done on the backend: the Admin API client, `doctor`, the read-only UI, the history store
+(log ingestion, metrics, rollups, retention) with its API, and editing the Caddyfile through the API with revisions and
+rollback. The interface for history and editing, the sites wizard and the rest are phase 4 and 5; the hardening of
+the apply flow that the comparison with the reference project asked for is slice 3f (`docs/backlog.md`). This
+document is the source of truth for scope and design; update it when a decision changes.
 
 ## 1. Scope
 
@@ -39,13 +42,15 @@ Internal packages:
 |---|---|
 | `internal/caddy` | Admin API client (unix socket or TCP) |
 | `internal/ingest` | Access log reader with a persistent cursor |
-| `internal/metrics` | `/metrics` scraper, counter deltas |
-| `internal/store` | SQLite storage behind a `Store` interface (`sqlite`, `memory` for tests) |
+| `internal/promtext`, `internal/scrape` | Prometheus text parser; `/metrics` scraper with counter deltas |
+| `internal/retain` | Retention and the database size cap |
+| `internal/store` | SQLite storage (`SQLite`, and `Memory` for tests and `--no-persist`) with one shared contract suite |
 | `internal/configmgr` | Revisions, validate/apply/rollback state machine |
-| `internal/auth` | Users, sessions, rate limiting |
+| `internal/doctor`, `internal/redact`, `internal/logtail`, `internal/cfgpath`, `internal/netutil` | The `doctor` checks, secret redaction, the live log tail and small shared helpers |
+| `internal/auth` | Users, sessions, rate limiting (phase 5, not written yet) |
 | `internal/server` | HTTP API, SSE |
 | `internal/web` | Embedded SPA handler |
-| `cmd/caddy-view` | CLI: `serve`, `doctor`, `reset-password` |
+| `cmd/caddy-view` | CLI: `serve`, `doctor`; `reset-password` and `healthcheck` come in phase 5 |
 | `web/` | Svelte + Vite frontend (built into `internal/web/dist`) |
 
 ## 3. How it talks to Caddy
@@ -139,7 +144,7 @@ Floating header with tabs.
 
 | Tab | Contents |
 |---|---|
-| Dashboard | Status, version, sites with upstream health, req/s, 5xx rate, p95, certificates near expiry |
+| Dashboard | Status, version, sites with upstream health, req/s, 5xx rate, p95 |
 | Metrics | Historical charts by period and host |
 | Caddyfile | Editor with live validation, diff, apply, history and rollback |
 | Sites | Reverse proxy wizard (writes `caddy-view-sites.caddy`) |
@@ -187,12 +192,15 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 | 0 | Repo, CI, structure, `doctor` | CI green; `doctor` reports what is missing in Caddy |
 | 1 | Read-only: Dashboard, Config, live Logs | Works against the test Caddy |
 | 2 | SQLite, log ingestion with cursor, metrics scraper | Restarting the UI loses no logs or metrics |
-| 3 | Caddyfile edit, validate, apply, rollback | An invalid config never leaves Caddy broken |
+| 3 | Caddyfile edit, validate, apply, rollback (API; slices 3a to 3e done) | An invalid config never leaves Caddy broken |
+| 3f | Hardening of the apply flow: load what the file says, crash recovery, verify after load, one apply across processes (`docs/backlog.md`, B1 to B4) | Each has a failing test first and a real-Caddy check where it applies |
 | 4 | Sites wizard, rollup charts, and the whole front end for history and editing (Caddyfile tab, log search tab, dashboard summary, design pass) | Creating a reverse proxy from the UI works |
 | 5 | Full login, release, Docker, docs | Fresh-machine install takes minutes |
 
-MVP is phases 0 to 3. Phase 0 is complete: CI runs gofmt, vet and race tests on Linux, macOS and Windows, and
-`doctor` was verified against a real Caddy 2.11.
+MVP is phases 0 to 3, but the editing of phase 3 has no interface until phase 4: today it is used through the API.
+Everything found by comparing with the reference project that is not in these phases is in `docs/backlog.md`, with the
+phase it goes to. CI runs gofmt, vet, staticcheck and govulncheck, and the tests with `-race` on Linux, macOS and
+Windows, plus integration tests against a real Caddy.
 
 ## 13. Risks
 
@@ -212,3 +220,6 @@ MVP is phases 0 to 3. Phase 0 is complete: CI runs gofmt, vet and race tests on 
 | Default storage | SQLite via `modernc.org/sqlite`, pure Go (memory store only for tests / `--no-persist`); see `docs/phase-2.md` |
 | Postgres | Out of scope; the `Store` interface keeps the door open |
 | Config backup | User-selectable: `full` or `sites-only` (section 5) |
+| Certificates | Caddy obtains, renews and validates them itself; the UI does not show their expiry in v1 (`docs/backlog.md`) |
+| README | Kept up to date by hand until the first release, when it is rewritten for open source readers (`docs/backlog.md`) |
+| Reference project | [caddy-visualizer](https://github.com/dree007/caddy-visualizer), a source of good practices, not copied; the comparison and what came out of it is `docs/backlog.md` |
