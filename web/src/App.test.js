@@ -3,6 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.svelte'
 
 const config = { apps: { http: {} } }
+const summary = {
+  window: '24h',
+  requests: 12,
+  requestsPerSecond: 0,
+  errors5xx: 0,
+  errorRate: 0,
+  avgMs: 5,
+  p95Ms: 9,
+  bytes: 2048,
+  status: {},
+  inFlight: null,
+  upstreams: null,
+}
+const traffic = {
+  resolution: 'hour',
+  bucketSeconds: 3600,
+  buckets: [{ start: new Date(2026, 9, 28, 9).toISOString(), requests: 12 }],
+}
 
 function json(body) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
@@ -17,6 +35,10 @@ function fakeFetch(url) {
       return Promise.resolve(json({ sites: [], upstreamsAvailable: true }))
     case '/api/config':
       return Promise.resolve(json(config))
+    case '/api/summary?window=24h':
+      return Promise.resolve(json(summary))
+    case '/api/traffic?resolution=hour':
+      return Promise.resolve(json(traffic))
     default:
       return Promise.reject(new Error(`unexpected request to ${url}`))
   }
@@ -42,6 +64,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals()
   window.history.replaceState({}, '', '/')
+  document.documentElement.removeAttribute('data-theme')
+  window.localStorage.clear()
 })
 
 describe('App navigation', () => {
@@ -131,5 +155,63 @@ describe('App screens', () => {
     openAt('/logs')
     await fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }))
     expect(closed).toHaveBeenCalledOnce()
+  })
+})
+
+function failing(prefix, status, body) {
+  return vi.fn((url) =>
+    url.startsWith(prefix)
+      ? Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+      : fakeFetch(url),
+  )
+}
+
+describe('App shell', () => {
+  it('gives every tab an icon that screen readers skip', () => {
+    openAt('/')
+    for (const link of screen.getByRole('navigation').querySelectorAll('a')) {
+      expect(link.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    }
+  })
+
+  it('has a theme button that says what it will do and remembers the choice', async () => {
+    openAt('/')
+    await fireEvent.click(screen.getByRole('button', { name: 'Switch to dark theme' }))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(window.localStorage.getItem('caddy-view-theme')).toBe('dark')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Switch to light theme' }))
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(window.localStorage.getItem('caddy-view-theme')).toBe('light')
+  })
+
+  it('starts with the theme that was chosen before', () => {
+    window.localStorage.setItem('caddy-view-theme', 'dark')
+    openAt('/')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeTruthy()
+  })
+})
+
+describe('App dashboard history', () => {
+  it('shows the totals and the chart from the history', async () => {
+    openAt('/')
+    const requests = await screen.findByRole('group', { name: 'Requests' })
+    expect(requests.textContent).toContain('12')
+    expect((await screen.findByRole('img')).getAttribute('aria-label')).toContain('Requests per hour')
+  })
+
+  it('says the history is off when its routes are not there', async () => {
+    vi.stubGlobal('fetch', failing('/api/summary', 404, { error: 'not found', code: 'not-found' }))
+    openAt('/')
+    expect(await screen.findByText(/traffic history is off/i)).toBeTruthy()
+    expect(await screen.findByText(/Caddy is reachable/)).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('shows an error when the history fails for another reason', async () => {
+    vi.stubGlobal('fetch', failing('/api/summary', 500, { error: 'the store is broken' }))
+    openAt('/')
+    expect((await screen.findByRole('alert')).textContent).toContain('the store is broken')
   })
 })

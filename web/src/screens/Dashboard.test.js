@@ -126,3 +126,117 @@ describe('Dashboard sites without a host', () => {
     expect(screen.getByText('(any host)')).toBeTruthy()
   })
 })
+
+const summary = {
+  window: '24h',
+  requests: 6811,
+  requestsPerSecond: 0.08,
+  errors5xx: 41,
+  errorRate: 0.006,
+  avgMs: 42.3,
+  p95Ms: 310,
+  bytes: 30828134,
+  status: { '2xx': 6000, '3xx': 400, '4xx': 370, '5xx': 41, '1xx': 0, other: 0 },
+  inFlight: 3,
+  upstreams: { healthy: 4, total: 5 },
+}
+
+const hour = (h, requests) => ({ start: new Date(2026, 9, 28, h).toISOString(), requests, bytes: 0, status: {} })
+const traffic = { resolution: 'hour', bucketSeconds: 3600, buckets: [hour(8, 100), hour(9, 400)] }
+
+const tile = (name) => screen.getByRole('group', { name })
+
+describe('Dashboard header', () => {
+  it('has a page title and a one-line subtitle', () => {
+    render(Dashboard, { status: reachable, sites })
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeTruthy()
+    expect(screen.getByText(/the last 24 hours and your sites at a glance/i)).toBeTruthy()
+  })
+})
+
+describe('Dashboard tiles', () => {
+  it('shows the totals of the last 24 hours', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(screen.getByRole('heading', { name: 'Last 24 hours' })).toBeTruthy()
+    expect(within(tile('Requests')).getByText('6,811')).toBeTruthy()
+    expect(within(tile('Requests')).getByText('3 in flight')).toBeTruthy()
+    expect(within(tile('Traffic')).getByText('29.4 MB')).toBeTruthy()
+    expect(within(tile('Server errors')).getByText('0.6 %')).toBeTruthy()
+    expect(within(tile('Server errors')).getByText('41 requests')).toBeTruthy()
+    expect(within(tile('Avg. response time')).getByText('42 ms')).toBeTruthy()
+    expect(within(tile('Avg. response time')).getByText('p95 310 ms')).toBeTruthy()
+  })
+
+  it('says how many upstreams are healthy when Caddy reports them', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(tile('Upstreams').textContent).toBe('Upstreams4 of 5healthy')
+  })
+
+  it('marks the upstreams tile when one is down', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(tile('Upstreams').dataset.tone).toBe('warn')
+  })
+
+  it('leaves out what it does not know instead of showing zeros', () => {
+    const quiet = { ...summary, inFlight: null, upstreams: null }
+    render(Dashboard, { status: reachable, sites, summary: quiet, traffic })
+    expect(screen.queryByRole('group', { name: 'Upstreams' })).toBeNull()
+    expect(screen.queryByText(/in flight/)).toBeNull()
+  })
+
+  it('shows an en dash for averages that do not exist yet', () => {
+    const empty = { ...summary, requests: 0, errors5xx: 0, errorRate: null, avgMs: null, p95Ms: null, bytes: 0 }
+    render(Dashboard, { status: reachable, sites, summary: empty, traffic: { ...traffic, buckets: [] } })
+    expect(within(tile('Server errors')).getByText('–')).toBeTruthy()
+    expect(within(tile('Avg. response time')).getByText('–')).toBeTruthy()
+    expect(within(tile('Requests')).getByText('0')).toBeTruthy()
+  })
+
+  it('uses the singular for one failing request', () => {
+    render(Dashboard, { status: reachable, sites, summary: { ...summary, errors5xx: 1 }, traffic })
+    expect(within(tile('Server errors')).getByText('1 request')).toBeTruthy()
+  })
+
+  it('marks a tile with server errors so it can be coloured', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(tile('Server errors').dataset.tone).toBe('bad')
+    expect(tile('Requests').hasAttribute('data-tone')).toBe(false)
+  })
+
+  it('does not colour the errors tile when there are none', () => {
+    render(Dashboard, { status: reachable, sites, summary: { ...summary, errors5xx: 0, errorRate: 0 }, traffic })
+    expect(tile('Server errors').hasAttribute('data-tone')).toBe(false)
+  })
+})
+
+describe('Dashboard traffic chart', () => {
+  it('draws requests per hour', () => {
+    const { container } = render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(screen.getByRole('img').getAttribute('aria-label')).toContain('Requests per hour')
+    expect(container.querySelectorAll('rect[data-bar]')).toHaveLength(2)
+  })
+
+  it('has no chart before the traffic has been read', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic: null })
+    expect(screen.queryByRole('img')).toBeNull()
+  })
+})
+
+describe('Dashboard without history', () => {
+  it('says the traffic history is off instead of showing tiles and a chart', () => {
+    render(Dashboard, { status: reachable, sites, historyOff: true })
+    expect(screen.getByText(/traffic history is off/i)).toBeTruthy()
+    expect(screen.queryByRole('group')).toBeNull()
+    expect(screen.queryByRole('img')).toBeNull()
+  })
+
+  it('still shows the sites', () => {
+    render(Dashboard, { status: reachable, sites, historyOff: true })
+    expect(screen.getByText('app.example.com')).toBeTruthy()
+  })
+
+  it('says nothing about history by default', () => {
+    render(Dashboard, { status: reachable, sites })
+    expect(screen.queryByText(/traffic history is off/i)).toBeNull()
+  })
+})

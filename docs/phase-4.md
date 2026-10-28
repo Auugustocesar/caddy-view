@@ -250,7 +250,8 @@ section's own `error` (the cause goes to the log, the client gets a generic text
   already has a `prefers-color-scheme` block) with a manual switch; one set of components (table, tile, chart frame, empty
   state, error banner, confirm dialog); layouts for a phone width; keyboard use and focus order; every chart has a table
   with the same numbers.
-- **Charts.** uPlot, named in the PLAN: small, MIT, no framework. Size and licence are checked before it is added.
+- **Charts.** An SVG bar chart in the Dashboard (see slice 4c); uPlot, named in the PLAN (small, MIT, no framework), only
+  if the Metrics tab needs long series, with size and licence checked before it is added.
 - **Editor.** A modern code editor, CodeMirror 6, with: Caddyfile syntax colouring, line numbers, matching of `{ }` and
   `( )` (highlighted pairs, and closing brackets added as you type), indentation that follows the braces, the line
   of an error marked in the margin, a diff against the live file, and **auto-format**. Formatting is `Format` in
@@ -263,6 +264,42 @@ section's own `error` (the cause goes to the log, the client gets a generic text
   screenshots are kept for the README of the release. There is no Playwright in CI for now; it can be added later.
 - **Text.** All UI text is English, as the rest of the repository.
 
+### Slice 4c in detail
+
+**Look.** Taken from the reference project's screenshots, not copied: warm neutrals (cream in light, warm dark brown in
+dark), one indigo accent, cards with large radii and no heavy borders, big light-weight page titles with a one-line
+subtitle, a floating pill navigation with an icon per tab, and a round theme button. System fonts only (no web font:
+the UI is embedded and works offline). Colours, radii, spacing and type sizes are CSS custom properties in `app.css`;
+dark is `prefers-color-scheme` unless the user picked a theme, which `data-theme` on `<html>` then forces.
+
+**Theme.** `lib/theme.js`: `loadTheme` / `saveTheme` (localStorage, failures ignored: private windows throw), `applyTheme`
+(`data-theme` on the root, `system` removes it) and `toggledTheme` (the opposite of what is shown now). The button says
+what it will do ("Switch to dark theme"). No stored choice means follow the system.
+
+**Dashboard.** Header (title and subtitle), the Caddy banner as now, a "Last 24 hours" row of tiles from
+`/api/summary?window=24h` (Requests with in flight, Traffic, Server errors with the count, Avg. response time with p95,
+Upstreams healthy when known), a bar chart of requests per hour from `/api/traffic?resolution=hour`, and the running
+sites table as now. A value that does not exist yet is an en dash, never zero. When the history routes answer 404
+(`--no-persist`) the Dashboard says traffic history is off instead of showing an error. Tile deltas against the previous
+period are left out: the API has no previous-period answer and two requests per tile is not worth it yet.
+
+**Chart.** A small SVG bar chart (`components/BarChart.svelte`, next to `Tile.svelte`) instead of uPlot. Reason: it is a few dozen bars, an SVG is
+testable in jsdom (uPlot draws on a canvas, which would be untested), it needs no dependency, and it carries the
+accessible name and the table with the same numbers for free. uPlot comes back in 4f only if the Metrics tab needs long
+series. Helpers: `lib/format.js` (counts, bytes, percent, milliseconds, clock time) and `lib/chart.js` (`niceMax` for the
+axis).
+
+**Done when** the Vitest suite passes, `npm run build` is committed with the sources, and the Dashboard has been looked at
+in a real browser against a running `serve`, in light, dark and phone width.
+
+**Done, and what the browser showed.** 213 tests pass (139 new). Looked at against a real Caddy 2.11.7 with 24 hours of
+access log, at 1280 px in light and dark and at 375 px: the first phone layout gave every tile a full row, so the tile
+grid now has a smaller minimum width (two per row on a phone) and tiles are tighter there; the tab names are hidden on a
+phone with a visually hidden style, not `display: none`, so the links keep their names. The bundle is 60 KB (23 KB
+gzip). Known and left: the chart's first and last hour both read 14:00 (a day apart, no date shown), and the theme
+button does not follow a change of the system theme made while the page is open (it reads it on load). The Logs and
+Config tabs only inherit the new colours; they are redone in 4f and 4h.
+
 ## Slices
 
 The backend of managed sites comes first, because it is the part with real risk and it is checked against a real Caddy;
@@ -272,7 +309,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 |---|---|---|
 | 4a | The status API (`/api/system`) with the state it needs from ingestion and the scraper (done) | Handler tests with fakes pass; the numbers match the store on a real run |
 | 4b | Managed sites, backend: migration 5, validation, the generator, apply with a managed file, rollback of both, `--managed-file`, the API (`/api/managed-sites`), done; `--backup-mode` waits for 4h | A real Caddy serves a site created through the API, refuses a duplicate hostname, and rolls it back; a killed apply is recovered |
-| 4c | Design system, app shell, Dashboard with tiles and the traffic chart | Tests pass; looked at in light, dark and phone width |
+| 4c | Design system, app shell, Dashboard with tiles and the traffic chart (done) | Tests pass; looked at in light, dark and phone width |
 | 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |
 | 4e | Sites tab and the wizard, including "add the import" | Creating a reverse proxy from the browser works against a real Caddy |
 | 4f | Metrics tab and Logs history search | Charts match `/api/traffic`; a search finds a stored request |

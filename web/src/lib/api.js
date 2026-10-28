@@ -44,3 +44,21 @@ export function getSites() {
 export function getConfig() {
   return get('/api/config')
 }
+
+/**
+ * Totals for a window (5m, 1h, 6h, 24h or 7d). Answers 404 when the history is off.
+ * @param {string} window
+ * @returns {Promise<{window: string, requests: number, requestsPerSecond: number, errors5xx: number, errorRate: number|null, avgMs: number|null, p95Ms: number|null, bytes: number, status: Record<string, number>, inFlight: number|null, upstreams: {healthy: number, total: number}|null}>}
+ */
+export function getSummary(window) {
+  return get(`/api/summary?window=${encodeURIComponent(window)}`)
+}
+
+/**
+ * Traffic per bucket. Answers 404 when the history is off.
+ * @param {'minute'|'hour'} resolution
+ * @returns {Promise<{resolution: string, bucketSeconds: number, buckets: Array<{start: string, requests: number, bytes: number, status: Record<string, number>, avgMs: number|null, p95Ms: number|null, maxMs: number|null}>}>}
+ */
+export function getTraffic(resolution) {
+  return get(`/api/traffic?resolution=${encodeURIComponent(resolution)}`)
+}
