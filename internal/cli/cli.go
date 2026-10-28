@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
@@ -166,6 +167,8 @@ func openHistory(ctx context.Context, dataDir string, noPersist bool) (history, 
 }
 
 func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	// The background workers log to stderr while this function writes to it too.
+	stderr = &syncWriter{w: stderr}
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	admin := fs.String("admin", defaultAdmin, "Caddy Admin API address (unix:///path or http://host:port)")
@@ -342,4 +345,17 @@ func retentionPolicy(retainLogs, retainRollups, maxDBSize string) (retain.Policy
 		return retain.Policy{}, fmt.Errorf("invalid --max-db-size: %w", err)
 	}
 	return p, nil
+}
+
+// syncWriter makes a writer safe to share between goroutines, so that the background workers' logs and serve's own
+// messages cannot interleave or race on a writer, such as a buffer, that is not safe for it.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
