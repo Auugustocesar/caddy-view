@@ -50,6 +50,7 @@ type fakeCaddy struct {
 	running         map[string]any
 	runningErr      error
 	candidateConfig map[string]any
+	loadIgnored     bool
 	// loadFn gets the 1-based number of the call. Nil means every load succeeds.
 	loadFn  func(ctx context.Context, n int, content string) error
 	adapted []string
@@ -77,10 +78,18 @@ func (f *fakeCaddy) Load(ctx context.Context, content string) error {
 	f.loads = append(f.loads, loadCall{content: content, ctxErr: ctx.Err()})
 	n := len(f.loads)
 	f.mu.Unlock()
-	if f.loadFn == nil {
-		return nil
+	if f.loadFn != nil {
+		if err := f.loadFn(ctx, n, content); err != nil {
+			return err
+		}
 	}
-	return f.loadFn(ctx, n, content)
+	// A real Caddy runs what it accepted; loadIgnored makes it accept and not run, as a broken Caddy might.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.loadIgnored {
+		f.running = f.candidateConfig
+	}
+	return nil
 }
 
 func (f *fakeCaddy) loaded() []string {
@@ -99,6 +108,8 @@ type fakeStore struct {
 	revs    []store.Revision
 	updates map[int64][]store.RevisionStatus
 	addErr  error
+
+	unfinishedErr error
 }
 
 func (f *fakeStore) AddRevision(_ context.Context, r store.Revision) (store.Revision, error) {
@@ -125,6 +136,21 @@ func (f *fakeStore) UpdateRevision(_ context.Context, number int64, status store
 	}
 	f.updates[number] = append(f.updates[number], status)
 	return nil
+}
+
+func (f *fakeStore) Unfinished(context.Context) ([]store.Revision, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.unfinishedErr != nil {
+		return nil, f.unfinishedErr
+	}
+	var out []store.Revision
+	for _, r := range f.revs {
+		if r.Status == store.StatusPending || r.Status == store.StatusLoading {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) LatestApplied(context.Context) (store.Revision, bool, error) {

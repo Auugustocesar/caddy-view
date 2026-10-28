@@ -65,8 +65,15 @@ func createPrivateFile(path string) error {
 	return f.Close()
 }
 
-// dsn builds the connection string. The pragmas are applied to every connection the pool opens.
+// dsn builds the connection string of the history database.
 func dsn(path string) string {
+	return SQLiteURI(path, []string{"busy_timeout(5000)", "journal_mode(WAL)", "synchronous(NORMAL)", "foreign_keys(1)"}, "immediate")
+}
+
+// SQLiteURI builds the connection string that opens the SQLite database file at path. The pragmas are applied to every
+// connection the pool opens, and txlock, when not empty, is the kind of transaction `BEGIN` starts. It exists so that
+// every caller turns a path into a URI the same way, including on Windows.
+func SQLiteURI(path string, pragmas []string, txlock string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
@@ -76,10 +83,12 @@ func dsn(path string) string {
 		p = "/" + p // file:///C:/dir/file.db
 	}
 	q := url.Values{}
-	for _, pragma := range []string{"busy_timeout(5000)", "journal_mode(WAL)", "synchronous(NORMAL)", "foreign_keys(1)"} {
+	for _, pragma := range pragmas {
 		q.Add("_pragma", pragma)
 	}
-	q.Set("_txlock", "immediate")
+	if txlock != "" {
+		q.Set("_txlock", txlock)
+	}
 	u := url.URL{Scheme: "file", Path: p, RawQuery: q.Encode()}
 	return u.String()
 }

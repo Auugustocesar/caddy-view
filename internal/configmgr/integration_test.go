@@ -334,3 +334,65 @@ func TestRealCaddyKeepsTheImportedSiteWhenTheImportIsAbsolute(t *testing.T) {
 		t.Errorf("the site answers %q after the apply, want imported", got)
 	}
 }
+
+func TestRealCaddyKnowsWhetherItRunsTheFile(t *testing.T) {
+	ctx := context.Background()
+	r := startCaddy(t, "v0")
+	if d, err := r.mgr.Reconcile(ctx); err != nil || d.Running != RunMatches {
+		t.Fatalf("at start Reconcile() = %+v, %v, want Running = RunMatches", d, err)
+	}
+
+	// Somebody reloads Caddy by hand with something else, behind the manager's back.
+	if err := r.client.Load(ctx, r.caddyfile("by-hand")); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := r.mgr.Reconcile(ctx); err != nil || d.Running != RunDiffers {
+		t.Fatalf("after a reload by hand Reconcile() = %+v, %v, want Running = RunDiffers", d, err)
+	}
+
+	// An apply puts the file and what runs back together.
+	if _, err := r.apply(t, r.caddyfile("v1")); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := r.mgr.Reconcile(ctx); err != nil || d.Running != RunMatches || !d.Known || d.Drifted {
+		t.Errorf("after an apply Reconcile() = %+v, %v, want Running = RunMatches, known and not drifted", d, err)
+	}
+}
+
+// A process killed after it wrote the file and Caddy loaded it, but before the revision left `loading`, or after the
+// file was written and before Caddy loaded it, leaves the same revision; only what Caddy runs tells them apart.
+func TestRealCaddyRecoversARevisionLeftLoading(t *testing.T) {
+	ctx := context.Background()
+	for _, tt := range []struct {
+		name       string
+		loaded     bool
+		wantStatus store.RevisionStatus
+	}{
+		{"caddy runs what was written", true, store.StatusApplied},
+		{"caddy still runs the old file", false, store.StatusRecoveryRequired},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := startCaddy(t, "v0")
+			content := r.caddyfile("v1")
+			if err := os.WriteFile(r.path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if tt.loaded {
+				if err := r.client.Load(ctx, content); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rev, err := r.store.AddRevision(ctx, store.Revision{
+				Time: time.Now(), Trigger: store.TriggerManualEdit, Status: store.StatusLoading, Content: content, SHA256: sum(content),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := r.mgr.Recover(ctx)
+			if err != nil || len(got) != 1 || got[0].Revision != rev.Number || got[0].Status != tt.wantStatus {
+				t.Fatalf("Recover() = %+v, %v, want revision %d resolved as %s", got, err, rev.Number, tt.wantStatus)
+			}
+		})
+	}
+}

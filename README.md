@@ -131,12 +131,20 @@ An apply goes through these steps, and Caddy is never left with a configuration 
    path in full (`import /etc/caddy/conf.d/*.caddy`), and `doctor` tells you when a Caddyfile has one.
 3. A candidate that would move or turn off Caddy's Admin API is refused, since caddy-view could then neither check nor
    undo anything.
-4. The file is replaced atomically and Caddy loads it. If Caddy refuses, the previous file is put back and reloaded.
-   If that fails too, the revision is `recovery-required`.
+4. The file is replaced atomically and Caddy loads it, and caddy-view reads back what Caddy runs and checks that it is
+   the configuration it was given. If Caddy refuses it, or does not run it, the previous file is put back and
+   reloaded. If that fails too, the revision is `recovery-required`.
 
 Every attempt is a revision with its full content, and a rollback applies an old one as a new revision.
-When `serve` starts it warns if the Caddyfile differs from the last applied revision. The design is in
-[docs/phase-3.md](docs/phase-3.md).
+
+When `serve --allow-edit` starts, it first resolves the revisions that a crash left half done (`pending` or `loading`):
+one that never reached the disk is `failed`, one whose file is on disk is `applied` if Caddy runs it and
+`recovery-required` if not. It never reloads Caddy by itself. Then it warns if the Caddyfile differs from the last
+applied revision, or if Caddy runs something other than the file (a reload from elsewhere).
+
+Only one caddy-view at a time can edit a Caddyfile: `serve --allow-edit` takes a lock kept in `.caddy-view.lock` next
+to it and refuses to start while another process holds it. The system frees the lock when that process ends, however it
+ends, so there is no stale lock to delete. The design is in [docs/phase-3.md](docs/phase-3.md).
 
 ### Security notes
 

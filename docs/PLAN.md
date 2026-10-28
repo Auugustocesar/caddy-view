@@ -5,9 +5,9 @@ Caddyfile safely, and manage reverse proxies.
 
 Status: phases 0 to 3 are done on the backend: the Admin API client, `doctor`, the read-only UI, the history store
 (log ingestion, metrics, rollups, retention) with its API, and editing the Caddyfile through the API with revisions and
-rollback. The interface for history and editing, the sites wizard and the rest are phase 4 and 5; the hardening of
-the apply flow that the comparison with the reference project asked for is slice 3f (`docs/backlog.md`). This
-document is the source of truth for scope and design; update it when a decision changes.
+rollback, hardened by slice 3f (relative imports refused, crash recovery, verification after load, one editor per
+Caddyfile; `docs/backlog.md`). The interface for history and editing, the sites wizard and the rest are phase 4 and 5.
+This document is the source of truth for scope and design; update it when a decision changes.
 
 ## 1. Scope
 
@@ -193,7 +193,7 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 | 1 | Read-only: Dashboard, Config, live Logs | Works against the test Caddy |
 | 2 | SQLite, log ingestion with cursor, metrics scraper | Restarting the UI loses no logs or metrics |
 | 3 | Caddyfile edit, validate, apply, rollback (API; slices 3a to 3e done) | An invalid config never leaves Caddy broken |
-| 3f | Hardening of the apply flow: load what the file says, crash recovery, verify after load, one apply across processes (`docs/backlog.md`, B1 to B4) | Each has a failing test first and a real-Caddy check where it applies |
+| 3f | Hardening of the apply flow, done: refuse relative imports, crash recovery, verify after load, one apply across processes (`docs/backlog.md`, B1 to B4) | Each has a failing test first and a real-Caddy check where it applies |
 | 4 | Sites wizard, rollup charts, and the whole front end for history and editing (Caddyfile tab, log search tab, dashboard summary, design pass) | Creating a reverse proxy from the UI works |
 | 5 | Full login, release, Docker, docs | Fresh-machine install takes minutes |
 

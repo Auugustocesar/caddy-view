@@ -152,3 +152,31 @@ func scanRevision(row interface{ Scan(dest ...any) error }) (Revision, error) {
 	r.Trigger, r.Status = RevisionTrigger(trigger), RevisionStatus(status)
 	return r, nil
 }
+
+// Unfinished returns the revisions still pending or loading, oldest first.
+func (s *SQLite) Unfinished(ctx context.Context) ([]Revision, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.closed.Load() {
+		return nil, ErrClosed
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT "+revisionColumns+
+		" FROM config_revisions WHERE status IN (?, ?) ORDER BY number ASC", string(StatusPending), string(StatusLoading))
+	if err != nil {
+		return nil, fmt.Errorf("list unfinished revisions: %w", err)
+	}
+	defer rows.Close()
+	out := []Revision{}
+	for rows.Next() {
+		r, err := scanRevision(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list unfinished revisions: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list unfinished revisions: %w", err)
+	}
+	return out, nil
+}

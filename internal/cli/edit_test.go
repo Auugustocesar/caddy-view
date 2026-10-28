@@ -27,27 +27,38 @@ func digestOf(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// editAdmin is a Caddy Admin API that adapts and loads whatever it is given and remembers the loads.
+// editAdmin is a Caddy Admin API that behaves like Caddy where it matters: a Caddyfile adapts to a configuration that
+// holds its text, a load makes that configuration the running one, and /config/ returns the running one. It
+// remembers the loads.
 type editAdmin struct {
 	*httptest.Server
-	mu    sync.Mutex
-	loads []string
+	mu      sync.Mutex
+	loads   []string
+	running string // the JSON /config/ returns; goodConfig until something is loaded
+}
+
+func adapted(caddyfile string) string {
+	b, _ := json.Marshal(map[string]any{"src": caddyfile})
+	return string(b)
 }
 
 func newEditAdmin(t *testing.T) *editAdmin {
 	t.Helper()
-	a := &editAdmin{}
+	a := &editAdmin{running: goodConfig}
 	a.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		body, _ := io.ReadAll(r.Body)
 		switch r.URL.Path {
 		case "/config/":
-			io.WriteString(w, goodConfig)
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			io.WriteString(w, a.running)
 		case "/adapt":
-			io.WriteString(w, `{"result":{},"warnings":[]}`)
+			io.WriteString(w, `{"result":`+adapted(string(body))+`,"warnings":[]}`)
 		case "/load":
-			body, _ := io.ReadAll(r.Body)
 			a.mu.Lock()
 			a.loads = append(a.loads, string(body))
+			a.running = adapted(string(body))
 			a.mu.Unlock()
 			io.WriteString(w, "{}")
 		default:

@@ -18,6 +18,7 @@ import (
 	"github.com/Auugustocesar/caddy-view/internal/configmgr"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
 	"github.com/Auugustocesar/caddy-view/internal/ingest"
+	"github.com/Auugustocesar/caddy-view/internal/instancelock"
 	"github.com/Auugustocesar/caddy-view/internal/retain"
 	"github.com/Auugustocesar/caddy-view/internal/scrape"
 	"github.com/Auugustocesar/caddy-view/internal/server"
@@ -137,13 +138,37 @@ func (e editor) Revisions(ctx context.Context, q store.RevisionQuery) ([]store.R
 func newEditor(ctx context.Context, client *caddy.Client, hist history, path string, logger *slog.Logger) editor {
 	mgr := configmgr.New(client, hist, configmgr.Options{Path: path, Logger: logger})
 	logger.Warn("--allow-edit is on: whoever can reach this address can change Caddy's configuration", "caddyfile", path)
+	// First resolve what a crash left unfinished, so that what follows compares against the truth.
+	if _, err := mgr.Recover(ctx); err != nil {
+		logger.Warn("cannot resolve the revisions a crash left unfinished", "caddyfile", path, "error", err)
+	}
 	if drift, err := mgr.Reconcile(ctx); err != nil {
 		logger.Warn("cannot compare the Caddyfile with the revision history", "caddyfile", path, "error", err)
-	} else if drift.Drifted {
-		logger.Warn("the Caddyfile differs from the newest applied revision, so it was edited outside caddy-view",
-			"caddyfile", path, "revision", drift.Revision)
+	} else {
+		if drift.Drifted {
+			logger.Warn("the Caddyfile differs from the newest applied revision, so it was edited outside caddy-view",
+				"caddyfile", path, "revision", drift.Revision)
+		}
+		if drift.Running == configmgr.RunDiffers {
+			logger.Warn("Caddy is running something other than the Caddyfile on disk: it was reloaded from elsewhere, "+
+				"or the file was changed without a reload", "caddyfile", path)
+		}
 	}
 	return editor{Manager: mgr, revisions: hist}
+}
+
+// caddyfileLock takes the lock that lets one caddy-view at a time edit a Caddyfile. The file is next to the Caddyfile,
+// since that directory is the one an apply already has to write in.
+func caddyfileLock(ctx context.Context, caddyfile string) (*instancelock.Lock, error) {
+	path := filepath.Join(filepath.Dir(caddyfile), ".caddy-view.lock")
+	l, err := instancelock.Acquire(ctx, path)
+	switch {
+	case errors.Is(err, instancelock.ErrBusy):
+		return nil, fmt.Errorf("another caddy-view is already editing the Caddyfile %s (lock %s)", caddyfile, path)
+	case err != nil:
+		return nil, fmt.Errorf("cannot lock the Caddyfile %s for editing: %w", caddyfile, err)
+	}
+	return l, nil
 }
 
 // openHistory opens the store that keeps the history: in memory with --no-persist, otherwise the SQLite database in
@@ -218,6 +243,14 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if err := checkEditFlags(*allowEdit, *caddyfile, *noPersist); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
+	}
+	if *allowEdit {
+		lock, err := caddyfileLock(ctx, *caddyfile)
+		if err != nil {
+			fmt.Fprintf(stderr, "serve: %v\n", err)
+			return 1
+		}
+		defer lock.Release() // the error of giving up a lock that the system frees at exit anyway is not worth a message
 	}
 
 	hist, err := openHistory(ctx, *dataDir, *noPersist)

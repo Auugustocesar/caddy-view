@@ -3,9 +3,11 @@
 package configmgr
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,6 +34,8 @@ var (
 	// working directory when it is given text through the Admin API, so the import could silently load nothing and drop
 	// the imported sites. The cause is a *RelativeImportError, with the line.
 	ErrRelativeImport = errors.New("the Caddyfile imports a file by a relative path")
+	// ErrNotRunning means Caddy accepted a configuration but, read back, does not run it (or cannot be read at all).
+	ErrNotRunning = errors.New("caddy does not run the configuration it accepted")
 	// ErrApplyFailed means Caddy refused to load the candidate and the previous configuration was restored.
 	ErrApplyFailed = errors.New("caddy could not load the Caddyfile, the previous one was restored")
 	// ErrRecoveryRequired means the candidate failed to load and the previous Caddyfile could not be restored or
@@ -71,6 +75,8 @@ type RevisionStore interface {
 	LatestApplied(ctx context.Context) (store.Revision, bool, error)
 	// Revision returns one revision; store.ErrNotFound when it does not exist.
 	Revision(ctx context.Context, number int64) (store.Revision, error)
+	// Unfinished returns the revisions still pending or loading, oldest first.
+	Unfinished(ctx context.Context) ([]store.Revision, error)
 }
 
 // Options configures a Manager.
@@ -110,6 +116,117 @@ type Drift struct {
 	Revision int64
 	// DiskSHA256 is the digest of the file on disk.
 	DiskSHA256 string
+	// Running says whether Caddy runs what the file says.
+	Running RunState
+}
+
+// RunState is whether the running Caddy matches the Caddyfile on disk.
+type RunState int
+
+// The answers to "does Caddy run the file?". RunUnknown is also what a check that could not be made gives: Caddy
+// unreachable, the file not adaptable, or a relative import that makes adapting the text from here meaningless.
+const (
+	RunUnknown RunState = iota
+	RunMatches
+	RunDiffers
+)
+
+// Recovery is how Recover resolved one unfinished revision.
+type Recovery struct {
+	Revision int64
+	Status   store.RevisionStatus
+	// Reason is what was found, as stored in the revision.
+	Reason string
+}
+
+// Recover resolves the revisions that a crash left pending or loading, oldest first, by recording what is true: it
+// never loads anything into Caddy.
+func (m *Manager) Recover(ctx context.Context) ([]Recovery, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	revs, err := m.store.Unfinished(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list the unfinished revisions: %w", err)
+	}
+	if len(revs) == 0 {
+		return nil, nil
+	}
+	cur, curErr := m.Current(ctx)
+	var out []Recovery
+	for _, r := range revs {
+		status, reason := m.resolve(ctx, r, cur, curErr)
+		stored := reason
+		if status == store.StatusApplied {
+			stored = ""
+		}
+		if err := m.store.UpdateRevision(ctx, r.Number, status, stored); err != nil {
+			return out, fmt.Errorf("record revision %d as %s: %w", r.Number, status, err)
+		}
+		m.log.Warn("resolved a revision a crash left unfinished", "revision", r.Number, "status", status, "reason", reason)
+		out = append(out, Recovery{Revision: r.Number, Status: status, Reason: reason})
+	}
+	return out, nil
+}
+
+// resolve decides what became of a revision whose apply was cut short. cur is the Caddyfile as it is now.
+func (m *Manager) resolve(ctx context.Context, r store.Revision, cur File, curErr error) (store.RevisionStatus, string) {
+	if r.Status == store.StatusPending {
+		return store.StatusFailed, "interrupted before it was applied"
+	}
+	// Loading: the file may or may not have been written, and Caddy may or may not have loaded it.
+	switch {
+	case curErr != nil:
+		return store.StatusRecoveryRequired, fmt.Sprintf("interrupted, and the Caddyfile cannot be read now: %v", curErr)
+	case cur.SHA256 != r.SHA256:
+		return store.StatusFailed, "interrupted; the Caddyfile was not changed to this revision"
+	}
+	switch state, why := m.runState(ctx, cur.Content); state {
+	case RunMatches:
+		return store.StatusApplied, "interrupted after Caddy loaded it, before it was recorded; Caddy runs it"
+	default:
+		return store.StatusRecoveryRequired, "interrupted after the Caddyfile was written, and Caddy may not run it: " + why
+	}
+}
+
+// runState compares the Caddyfile text with the configuration Caddy runs. The reason is set when the answer is
+// RunUnknown or RunDiffers. A text with a relative import cannot be compared: adapting it from here would resolve the
+// import from Caddy's working directory, not as Caddy resolved it when it loaded the file.
+func (m *Manager) runState(ctx context.Context, content string) (RunState, string) {
+	if len(caddyfile.RelativeImports(content)) > 0 {
+		return RunUnknown, "the Caddyfile imports a file by a relative path, so it cannot be compared with what Caddy runs"
+	}
+	adapted, err := m.caddy.Adapt(ctx, content)
+	if err != nil {
+		return RunUnknown, fmt.Sprintf("Caddy cannot adapt the Caddyfile: %v", err)
+	}
+	running, err := m.caddy.Config(ctx)
+	if err != nil {
+		return RunUnknown, fmt.Sprintf("the configuration Caddy runs cannot be read: %v", err)
+	}
+	if sameConfig(adapted.Config, running) {
+		return RunMatches, ""
+	}
+	return RunDiffers, "Caddy runs a configuration other than the Caddyfile's"
+}
+
+// sameConfig reports whether two configurations are the same JSON. encoding/json writes map keys in order, so the
+// text of equal configurations is equal.
+func sameConfig(a, b map[string]any) bool {
+	x, errA := json.Marshal(a)
+	y, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(x, y)
+}
+
+// verify reads back what Caddy runs after it accepted a load, and checks that it is what was loaded.
+func (m *Manager) verify(ctx context.Context, loaded map[string]any) error {
+	running, err := m.caddy.Config(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: it cannot be read back: %w", ErrNotRunning, err)
+	}
+	if !sameConfig(loaded, running) {
+		return fmt.Errorf("%w: what it runs differs from what was loaded", ErrNotRunning)
+	}
+	return nil
 }
 
 // restoreTimeout bounds the restore of the previous Caddyfile, which ignores the caller's cancellation.
@@ -206,6 +323,7 @@ func (m *Manager) Reconcile(ctx context.Context) (Drift, error) {
 		return Drift{}, fmt.Errorf("find the newest applied revision: %w", err)
 	}
 	d := Drift{DiskSHA256: cur.SHA256}
+	d.Running, _ = m.runState(ctx, cur.Content) // an unknown answer says so itself; the reason is for Recover
 	if ok {
 		d.Known = true
 		d.Revision = rev.Number
@@ -253,6 +371,10 @@ func (m *Manager) apply(ctx context.Context, req ApplyRequest) (store.Revision, 
 	}
 
 	loadErr := m.caddy.Load(ctx, req.Content)
+	if loadErr == nil {
+		// A 200 is not proof: read back what Caddy runs.
+		loadErr = m.verify(ctx, adapted.Config)
+	}
 	if loadErr == nil {
 		// The new Caddyfile is live; what is left is only the record of it.
 		return m.finish(ctx, rev, store.StatusApplied, nil)

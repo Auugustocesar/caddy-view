@@ -99,3 +99,22 @@ func (m *Memory) Revisions(ctx context.Context, q RevisionQuery) ([]Revision, er
 	}
 	return out, nil
 }
+
+// Unfinished returns the revisions still pending or loading, oldest first.
+func (m *Memory) Unfinished(ctx context.Context) ([]Revision, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, ErrClosed
+	}
+	out := []Revision{}
+	for _, r := range m.revisions {
+		if r.Status == StatusPending || r.Status == StatusLoading {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}

@@ -18,6 +18,7 @@ type RevisionStore interface {
 	LatestApplied(ctx context.Context) (store.Revision, bool, error)
 	Revision(ctx context.Context, number int64) (store.Revision, error)
 	Revisions(ctx context.Context, q store.RevisionQuery) ([]store.Revision, error)
+	Unfinished(ctx context.Context) ([]store.Revision, error)
 	Close() error
 }
 
@@ -278,6 +279,35 @@ func RunRevisions(t *testing.T, newStore func(t *testing.T) RevisionStore) {
 		}
 	})
 
+	t.Run("Unfinished lists the pending and loading revisions, oldest first", func(t *testing.T) {
+		s := fresh(t)
+		if got, err := s.Unfinished(ctx); err != nil || len(got) != 0 {
+			t.Fatalf("Unfinished on an empty store = %v, %v, want none", numbers(got), err)
+		}
+		statuses := []store.RevisionStatus{
+			store.StatusPending, store.StatusApplied, store.StatusLoading, store.StatusFailed, store.StatusRecoveryRequired, store.StatusLoading,
+		}
+		for i, status := range statuses {
+			added := mustAddRevision(t, s, revision("content", base.Add(time.Duration(i)*time.Second)))
+			if err := s.UpdateRevision(ctx, added.Number, status, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := s.Unfinished(ctx)
+		if err != nil || !sameNumbers(numbers(got), []int64{1, 3, 6}) {
+			t.Fatalf("Unfinished = %v, %v, want [1 3 6]", numbers(got), err)
+		}
+		if got[0].Content != "content" || got[0].Status != store.StatusPending {
+			t.Errorf("Unfinished[0] = %+v, want the whole revision", got[0])
+		}
+		if err := s.UpdateRevision(ctx, 3, store.StatusFailed, "boom"); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Unfinished(ctx); !sameNumbers(numbers(got), []int64{1, 6}) {
+			t.Errorf("Unfinished after resolving 3 = %v, want [1 6]", numbers(got))
+		}
+	})
+
 	t.Run("a closed store refuses everything", func(t *testing.T) {
 		s := newStore(t)
 		if err := s.Close(); err != nil {
@@ -288,6 +318,9 @@ func RunRevisions(t *testing.T, newStore func(t *testing.T) RevisionStore) {
 		}
 		if _, err := s.Revisions(ctx, store.RevisionQuery{}); !errors.Is(err, store.ErrClosed) {
 			t.Errorf("Revisions error = %v, want ErrClosed", err)
+		}
+		if _, err := s.Unfinished(ctx); !errors.Is(err, store.ErrClosed) {
+			t.Errorf("Unfinished error = %v, want ErrClosed", err)
 		}
 	})
 }

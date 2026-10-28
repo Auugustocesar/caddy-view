@@ -14,9 +14,9 @@ day, M a few days, L about a week.
 |---|---|---|
 | Now (docs) | **B0** README and PLAN were out of date | S, done with this document |
 | Slice 3f, before phase 4 | **B1** a relative `import` makes an apply drop the imported sites: refuse it, and fix `doctor` (spike done, confirmed; implemented) | M |
-| | **B2** resolve revisions left unfinished by a crash | M |
-| | **B3** verify the running config after `/load`, and check drift against the running Caddy | M (starts with a spike) |
-| | **B4** one apply at a time across processes | M |
+| | **B2** resolve revisions left unfinished by a crash (done) | M |
+| | **B3** verify the running config after `/load`, and check drift against the running Caddy (spike done, stable; done) | M |
+| | **B4** one apply at a time across processes (done) | M |
 | Phase 4, slice 4a | **B5** a system status API, before any UI that shows it | M |
 | Phase 4 design | **B6** the options of a site, decided before the wizard | S (a decision, then code) |
 | Phase 5 | **B7** a health route and a `healthcheck` command for Docker | S |
@@ -96,6 +96,11 @@ it only records what is true and logs it.
 **Tests first.** Each crash point is a stored revision plus a file state, with fakes for Caddy: one table-driven test
 of `Recover`; a store contract test for the listing; a `serve` test that starts with a leftover `loading` revision.
 
+**Done.** `Manager.Recover`, `store.Unfinished` (both stores, in the contract suite) and the call in `serve --allow-edit`.
+A real Caddy tells the two crash cases apart: file written and loaded (resolved `applied`), file written and not loaded
+(`recovery-required`). The listing is a store method rather than a filter on `Revisions`, because an unfinished
+revision could be older than any page that is read.
+
 ## B3. Verify after `/load`, and check drift against the running Caddy
 
 **Why.** Today a `200` from `/load` is trusted, and drift is only "the file differs from the last applied revision".
@@ -112,6 +117,16 @@ the adapted candidate, which proves that Caddy runs what was applied and also re
 **Tests first.** The spike; then fake-Caddy unit tests of verify, mismatch and unreachable Caddy; the real-Caddy
 integration test of a reload made behind the manager's back.
 
+**Spike result and what was done.** With Caddy 2.11.7 the configuration from `GET /config/` is identical (as JSON
+with sorted keys) to the `/adapt` result of the same text: at start, after a load by hand, and after every apply of the
+integration tests, which now verify. So the stable branch was taken: after `/load`, `Apply` reads back what Caddy runs
+and a difference, or a Caddy that cannot be read, is handled like a refused load (`ErrNotRunning` inside
+`ErrApplyFailed`, the previous file restored). `Reconcile` gained `Running` (`RunMatches`, `RunDiffers`, `RunUnknown`);
+it is `RunUnknown` when Caddy is unreachable, the file cannot be adapted, or the file has a relative import (adapting its
+text from here would resolve the import from the wrong directory). `serve` warns on `RunDiffers`. Showing it in the API
+is left to B5, with the rest of the status. Only one Caddy version was tried; if another normalises differently, the
+symptom is an apply refused with `ErrNotRunning`, and the check can be relaxed to a warning.
+
 ## B4. One apply at a time across processes
 
 **Why.** The mutex is inside one process. Two `caddy-view` processes on one Caddyfile can both pass the stale-base
@@ -126,6 +141,12 @@ directory it would cover only processes sharing that directory. The first is pro
 
 **Tests first.** Two lockers on one path (the second is refused, and succeeds after the first releases); a lock held by
 a process that was killed is free; a `serve` test that refuses to start while the lock is held.
+
+**Done.** `internal/instancelock`, with the lock in `.caddy-view.lock` next to the Caddyfile as proposed. The test binary
+runs itself as the holding process, so "held by another process" and "freed when that process is killed" are tested for
+real, on Windows here and on Linux and macOS in CI. `store.SQLiteURI` is the one place that turns a path into a SQLite
+URI, shared with the history store. It refuses a symbolic link at the lock path. `serve --allow-edit` exits with code 1
+and names the Caddyfile when the lock is taken; without `--allow-edit` nothing is locked.
 
 ## B5. A system status API (phase 4, slice 4a)
 
