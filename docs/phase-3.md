@@ -64,6 +64,43 @@ Both stores get five methods, the four `configmgr.RevisionStore` needs plus a li
 - **Concurrency and closing** follow the other store methods: safe to share, `ErrClosed` after `Close`.
 - Revisions are never pruned by retention: they are the rollback history and are small.
 
+## Caddyfile API and flags (slice 3c)
+
+`serve` gets two flags: `--caddyfile PATH`, the file to edit, and `--allow-edit`, which turns the routes below on.
+Without `--allow-edit` they are a 404, like the history routes without a store, and the server stays read-only.
+`server.Options.Editor` is an interface of the six methods the routes need (`Current`, `Validate`, `Apply`,
+`Rollback`, `Revision`, `Revisions`); `configmgr.Manager` and the store provide them.
+
+- **Why every route needs `--allow-edit`, reads included.** The raw Caddyfile and its revisions can hold secrets that
+  cannot be redacted reliably (`/api/config` redacts the JSON; a text file has no structure to redact). So reading
+  them is as sensitive as changing them.
+- **`--allow-edit` rules**, refused at start with exit code 2 and a message that names the flags: it needs
+  `--caddyfile`; it cannot be combined with `--no-persist` (the revisions are the rollback history and must survive a
+  restart); the Caddyfile must be a readable file. At start the manager reconciles and a drift is a warning in the
+  log; serve also warns that `--allow-edit` lets whoever can reach the port change Caddy.
+- **Loopback is already enforced.** `serve` listens on loopback only, whatever the flags say, until phase 5 adds
+  authentication, so the open question about `--allow-edit` on a LAN address has no case to cover: there is none.
+- **Cross-site requests.** Without a login, a page on another origin could still send a request to `127.0.0.1`. The
+  Host check stops DNS rebinding but not that. So every POST must have `Content-Type: application/json` (415
+  otherwise; a browser cannot send that cross-site without a CORS preflight, which is never answered), and a request
+  that carries an `Origin` must carry the one of the Host it was sent to (403 otherwise). Requests without `Origin`,
+  such as `curl`, pass. This applies to rollback too, which has no body.
+- **Routes** (JSON; a body is at most 1 MiB, 413 above it; unknown fields are a 400):
+  - `GET /api/caddyfile` answers `{"content", "sha256"}`.
+  - `POST /api/caddyfile/validate` takes `{"content"}` and answers 200 `{"valid": true, "warnings": [...]}` or
+    200 `{"valid": false, "error", "line"}`: a rejected Caddyfile is the expected answer to a validation, not an HTTP
+    error. A Caddy that cannot be reached is a 502.
+  - `POST /api/caddyfile/apply` takes `{"content", "baseSha256"}` (both required) and answers 200
+    `{"revision": {...}}`.
+  - `GET /api/revisions` (`limit`, `before`) answers `{"revisions": [...], "next": number | null}`, newest first,
+    without the content. `GET /api/revisions/{n}` answers one revision with its `content`; 404 when unknown.
+  - `POST /api/revisions/{n}/rollback` answers like apply.
+  - A revision is `number`, `time` (RFC 3339, UTC), `trigger`, `status`, `sha256` and `error` (when set).
+- **Failures of apply and rollback** are `{"error", "code", ...}`: `conflict` (409), `invalid` (422, with `line`),
+  `apply-failed` (502, Caddy refused to load it and the previous file was restored, with the `revision`),
+  `recovery-required` (500, with the `revision`) and `not-found` (404, rollback of an unknown revision). Anything else
+  is a 500 with a generic message; the cause goes to the log.
+
 ## Slices
 
 | Slice | Deliverable | Done when |

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
+	"github.com/Auugustocesar/caddy-view/internal/configmgr"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
 	"github.com/Auugustocesar/caddy-view/internal/ingest"
 	"github.com/Auugustocesar/caddy-view/internal/retain"
@@ -83,14 +84,65 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	return doctor.ExitCode(results)
 }
 
-// history is the store behind the UI: ingestion and the metrics scraper write to it, retention prunes it and the API
-// reads from it.
+// history is the store behind the UI: ingestion and the metrics scraper write to it, retention prunes it, the API
+// reads from it and the Caddyfile manager keeps its revisions in it.
 type history interface {
 	ingest.Store
 	scrape.Store
 	retain.Store
 	server.History
+	configmgr.RevisionStore
+	Revisions(ctx context.Context, q store.RevisionQuery) ([]store.Revision, error)
 	io.Closer
+}
+
+// checkEditFlags refuses an --allow-edit that could not be done safely. The messages name the flags.
+func checkEditFlags(allowEdit bool, caddyfile string, noPersist bool) error {
+	if !allowEdit {
+		return nil
+	}
+	switch {
+	case caddyfile == "":
+		return errors.New("invalid --allow-edit: it needs --caddyfile, the file to edit")
+	case noPersist:
+		return errors.New("invalid --allow-edit: it cannot be used with --no-persist, because the revisions are the " +
+			"rollback history and must survive a restart")
+	}
+	if _, err := os.ReadFile(caddyfile); err != nil {
+		return fmt.Errorf("invalid --caddyfile: %w", err)
+	}
+	return nil
+}
+
+// editor serves the Caddyfile routes: the manager changes the file, the history keeps and lists the revisions.
+type editor struct {
+	*configmgr.Manager
+	revisions interface {
+		Revision(ctx context.Context, number int64) (store.Revision, error)
+		Revisions(ctx context.Context, q store.RevisionQuery) ([]store.Revision, error)
+	}
+}
+
+func (e editor) Revision(ctx context.Context, number int64) (store.Revision, error) {
+	return e.revisions.Revision(ctx, number)
+}
+
+func (e editor) Revisions(ctx context.Context, q store.RevisionQuery) ([]store.Revision, error) {
+	return e.revisions.Revisions(ctx, q)
+}
+
+// newEditor builds the editor for --allow-edit and warns about what that allows and about a Caddyfile that was
+// changed behind caddy-view's back.
+func newEditor(ctx context.Context, client *caddy.Client, hist history, path string, logger *slog.Logger) editor {
+	mgr := configmgr.New(client, hist, configmgr.Options{Path: path, Logger: logger})
+	logger.Warn("--allow-edit is on: whoever can reach this address can change Caddy's configuration", "caddyfile", path)
+	if drift, err := mgr.Reconcile(ctx); err != nil {
+		logger.Warn("cannot compare the Caddyfile with the revision history", "caddyfile", path, "error", err)
+	} else if drift.Drifted {
+		logger.Warn("the Caddyfile differs from the newest applied revision, so it was edited outside caddy-view",
+			"caddyfile", path, "revision", drift.Revision)
+	}
+	return editor{Manager: mgr, revisions: hist}
 }
 
 // openHistory opens the store that keeps the history: in memory with --no-persist, otherwise the SQLite database in
@@ -127,6 +179,8 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	retainRollups := fs.String("retain-rollups", "90d", "how long hour rollups are kept, such as 90d; 0 keeps them forever")
 	maxDBSize := fs.String("max-db-size", "1GiB", "most the history may hold, such as 512MiB or 1GiB; above it the oldest raw data is deleted; 0 turns the cap off")
 	storeQuery := fs.Bool("store-query", false, "keep query strings in the stored request paths (they often carry tokens)")
+	caddyfile := fs.String("caddyfile", "", "path to the Caddyfile caddy-view may edit; used with --allow-edit")
+	allowEdit := fs.Bool("allow-edit", false, "let the UI and API read and change the Caddyfile; needs --caddyfile and the history database")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -158,6 +212,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
+	if err := checkEditFlags(*allowEdit, *caddyfile, *noPersist); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
 
 	hist, err := openHistory(ctx, *dataDir, *noPersist)
 	if err != nil {
@@ -170,14 +228,18 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, "warning: --show-secrets is on, /api/config returns secrets in clear text")
 	}
 	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
-	handler := server.New(client, server.Options{
+	opts := server.Options{
 		Endpoint:      client.Endpoint(),
 		ShowSecrets:   *showSecrets,
 		Logger:        logger,
 		AccessLogPath: *accessLog,
 		UI:            web.Handler(),
 		History:       hist,
-	})
+	}
+	if *allowEdit {
+		opts.Editor = newEditor(ctx, client, hist, *caddyfile, logger)
+	}
+	handler := server.New(client, opts)
 	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.
 	stopIngest := startIngest(ctx, hist, client, *accessLog, *storeQuery, logger)
 	defer stopIngest()

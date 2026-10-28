@@ -37,6 +37,8 @@ type Options struct {
 	AccessLogPath string
 	// History serves /api/logs, /api/traffic and /api/summary. When nil, those routes are a 404.
 	History History
+	// Editor serves the Caddyfile and revision routes, which change Caddy. When nil, those routes are a 404.
+	Editor Editor
 	// Now gives the current time for the history routes. Zero means time.Now.
 	Now func() time.Time
 	// MaxStreams caps the concurrent log streams. Zero means 8.
@@ -57,7 +59,8 @@ type api struct {
 
 var errNoAccessLog = errors.New("no access log found: configure a JSON file logger in Caddy or pass --access-log")
 
-// New returns the read-only API handler. It only serves GET, and only to loopback Host names.
+// New returns the API handler, only for loopback Host names. It is read-only: it serves GET, and POST only on the
+// Caddyfile and revision routes that exist when Options.Editor is set.
 func New(c Caddy, opts Options) http.Handler {
 	log := opts.Logger
 	if log == nil {
@@ -68,16 +71,22 @@ func New(c Caddy, opts Options) http.Handler {
 		maxStreams = defaultMaxStreams
 	}
 	a := &api{caddy: c, opts: opts, log: log, streams: make(chan struct{}, maxStreams)}
-	routes := map[string]http.HandlerFunc{
-		"/api/status":      a.status,
-		"/api/config":      a.config,
-		"/api/sites":       a.sites,
-		"/api/logs/stream": a.logStream,
+	routes := map[string]route{
+		"/api/status":      onGet(a.status),
+		"/api/config":      onGet(a.config),
+		"/api/sites":       onGet(a.sites),
+		"/api/logs/stream": onGet(a.logStream),
 	}
 	if opts.History != nil {
-		routes["/api/logs"] = a.logs
-		routes["/api/traffic"] = a.traffic
-		routes["/api/summary"] = a.summary
+		routes["/api/logs"] = onGet(a.logs)
+		routes["/api/traffic"] = onGet(a.traffic)
+		routes["/api/summary"] = onGet(a.summary)
+	}
+	if opts.Editor != nil {
+		routes["/api/caddyfile"] = onGet(a.caddyfile)
+		routes["/api/caddyfile/validate"] = onPost(a.validate)
+		routes["/api/caddyfile/apply"] = onPost(a.apply)
+		routes["/api/revisions"] = onGet(a.revisions)
 	}
 	return a.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !loopbackHost(r.Host) {
@@ -92,19 +101,34 @@ func New(c Caddy, opts Options) http.Handler {
 		}
 
 		setAPIHeaders(w)
-		handler, ok := routes[r.URL.Path]
+		rt, ok := routes[r.URL.Path]
+		if !ok && opts.Editor != nil {
+			rt, ok = a.revisionRoute(r.URL.Path)
+		}
 		if !ok {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
+		if r.Method != rt.method {
+			w.Header().Set("Allow", rt.method)
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		handler(w, r)
+		if rt.method == http.MethodPost && !a.sameSiteJSON(w, r) {
+			return
+		}
+		rt.handler(w, r)
 	}))
 }
+
+// route is a handler and the one method it answers.
+type route struct {
+	method  string
+	handler http.HandlerFunc
+}
+
+func onGet(h http.HandlerFunc) route  { return route{http.MethodGet, h} }
+func onPost(h http.HandlerFunc) route { return route{http.MethodPost, h} }
 
 // isAPIPath reports whether a path belongs to the API, which never falls through to the UI.
 func isAPIPath(p string) bool { return p == "/api" || strings.HasPrefix(p, "/api/") }
