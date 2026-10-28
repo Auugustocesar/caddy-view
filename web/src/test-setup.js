@@ -5,3 +5,8 @@ globalThis.ResizeObserver ??= class {
   unobserve() {}
   disconnect() {}
 }
+
+// CodeMirror measures text with Range rectangles, which jsdom does not implement: an empty answer is enough.
+const noRects = Object.assign([], { item: () => null })
+Range.prototype.getClientRects ??= () => noRects
+Range.prototype.getBoundingClientRect ??= () => new DOMRect(0, 0, 0, 0)

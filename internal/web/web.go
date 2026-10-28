@@ -3,8 +3,11 @@ package web
 
 import (
 	"bytes"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"path"
@@ -26,9 +29,23 @@ const (
 )
 
 // The policy lets the page load only its own script and style, and talk only to its own origin. Nothing in the UI
-// needs more, and it keeps a stray log line or config value from becoming a script.
-const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
+// needs more, and it keeps a stray log line or config value from becoming a script. The one addition is a nonce for
+// style: the code editor puts <style> elements in the page, and a nonce that is new with every response admits
+// those and no other inline style. %s is where it goes.
+const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self' 'nonce-%s'; connect-src 'self'; " +
 	"img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+// noncePlaceholder is what index.html holds where the nonce goes; the page reads it from a <meta> tag.
+const noncePlaceholder = "__CSP_NONCE__"
+
+// newNonce returns 128 random bits, in the alphabet that is safe in a header and in an attribute.
+func newNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
 
 // Handler serves the UI that was built into the binary.
 func Handler() http.Handler {
@@ -45,7 +62,12 @@ func Handler() http.Handler {
 func NewHandler(fsys fs.FS) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", contentSecurityPolicy)
+		nonce, err := newNonce()
+		if err != nil {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		h.Set("Content-Security-Policy", fmt.Sprintf(contentSecurityPolicy, nonce))
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Frame-Options", "DENY")
@@ -78,6 +100,9 @@ func NewHandler(fsys fs.FS) http.Handler {
 			}
 		}
 
+		if name == indexFile {
+			data = bytes.ReplaceAll(data, []byte(noncePlaceholder), []byte(nonce))
+		}
 		h.Set("Content-Type", contentType(name))
 		if strings.HasPrefix(name, assetsDir+"/") {
 			h.Set("Cache-Control", hashedCache)

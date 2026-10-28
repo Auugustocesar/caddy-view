@@ -102,6 +102,7 @@ func New(c Caddy, opts Options) http.Handler {
 	if opts.Editor != nil {
 		routes["/api/caddyfile"] = onGet(a.caddyfile)
 		routes["/api/caddyfile/validate"] = onPost(a.validate)
+		routes["/api/caddyfile/format"] = onPost(a.format)
 		routes["/api/caddyfile/apply"] = onPost(a.apply)
 		routes["/api/revisions"] = onGet(a.revisions)
 	}

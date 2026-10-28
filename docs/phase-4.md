@@ -300,6 +300,59 @@ gzip). Known and left: the chart's first and last hour both read 14:00 (a day ap
 button does not follow a change of the system theme made while the page is open (it reads it on load). The Logs and
 Config tabs only inherit the new colours; they are redone in 4f and 4h.
 
+### Slice 4d in detail
+
+**Format.** `caddyfile.Format(text)` and `POST /api/caddyfile/format` (`{"content"}` in, `{"content", "changed"}` out; it
+reads nothing from Caddy or from disk). The reference is `caddy fmt`, and the tests hold Format to it twice: the unit
+test checks Format against a table of cases whose expected text *is* what `caddy fmt` returned, and an integration test
+runs the real Caddy on the same inputs, both against Format and against the table, so the table cannot drift. Format
+only moves white space: tabs for nesting, one space between tokens, `{` at the end of its line, `}` on its own, one
+blank line at most and none at the edges of a block, a final newline. It reads strings, backtick strings, heredocs and
+comments as the lexer does, and a `{` is a placeholder only if its `}` comes before any white space.
+Where Caddy 2.11.7's formatter does something that changes what the text says, Format does not copy it, and the case
+is in `formatDifferences` together with what Caddy did: a line ending in a backslash loses its indentation and its
+line break in Caddy; a `#` inside a word is read by Caddy as a comment (so a `{` after it opens nothing); a word right
+after `}` goes on the same line behind a tab; a space after `<<` is removed. A fuzz test (the seeds run with every
+`go test`; 11.7 million runs when this was written) holds Format to three things for any text: no panic, only white
+space changes, and formatting the output changes nothing. It found two cases that are now rules: a quote that is never
+closed and a heredoc that is never closed are ordinary characters, and a `{` with no `}` before white space opens a
+block. One thing it found stays open and is written in the test: an unclosed heredoc followed by a word that happens to
+be its marker reads differently once the layout has indented that word, which is not a Caddyfile Caddy accepts.
+
+**The editor.** CodeMirror 6, pinned (`@codemirror/state`, `view`, `commands`, `language`, `autocomplete` and
+`@lezer/highlight`, all MIT; `npm audit --omit=dev` is clean). The Caddyfile language is a StreamLanguage tokenizer in
+`lib/caddyfile-language.js` that colours addresses, directives, strings, placeholders, matchers, snippets, comments and
+braces, counts blocks for indentation (a tab per level, a `}` back at the level of its block) and closes `( { " \``.
+Colours are `--syn-*` custom properties, so the editor follows the theme. Pairs of `{ }` and `( )` are highlighted next
+to the cursor. The line of an error is marked in the text and in the margin. Bundle: 376 KB, 125 KB gzip, below the 500 KB
+that would have been a decision for the maintainer (the UI was 60 KB before).
+
+**The screen** (`screens/CaddyfileView.svelte`, owns its data): Format, Show changes, Discard changes, status, Apply.
+Every edit is checked with Caddy after a pause (500 ms), a newer edit makes an older answer worthless, and Apply is on only
+for text that Caddy has said is valid. A refusal keeps the text, says what Caddy said (without the adapter prefix and the
+position and import chain that the page already shows: `lib/caddy-error.js`) and marks the line. A `conflict` offers
+"Reload from disk". Changes are a line diff against the file (`lib/diff.js`, with two lines of context; past 4 million
+cells it falls back to one block replaced by the other). History lists the revisions with trigger and status, marks the
+current one, compares any revision with the file, and rolls back after a confirmation that says unsaved edits would be
+lost; failed revisions cannot be rolled back to.
+
+**The Content-Security-Policy had to change.** The first look at the editor in a real browser showed line numbers and
+no text: CodeMirror puts `<style>` elements in the page and `style-src 'self'` blocks them, which no jsdom test can
+show. `unsafe-inline` would have loosened the policy for everything, so the handler now writes a new 128-bit nonce on
+every response into `style-src 'self' 'nonce-…'` and into `<meta name="csp-nonce">` of `index.html` (the build leaves
+`__CSP_NONCE__` there, a test checks it), and the editor gives it to CodeMirror. Scripts get no nonce and `unsafe-inline`
+stays out; tests cover the nonce in both places, that it differs with every response, that only the index page is
+rewritten and that the rest of the policy is unchanged.
+
+**What the real browser and the real Caddy showed.** A typo in a block is refused by Caddy with its line, and the editor
+marks that line (red band and `!` in the margin) and keeps Apply off; Format turns `http://new.localhost{` / `respond   "new"`
+into the `caddy fmt` layout; Apply wrote the file, loaded it (the new site answered), and put revision 1 in the history;
+a second change and a roll back to revision 1 restored the file byte for byte (same SHA-256) as revision 3 and the new
+site still answered. Bracket closing is tested through CodeMirror's input handler; the browser pane's synthetic typing
+does not go through that path, so it was not seen there. The API names (`manual-edit`, `recovery-required`) have
+hyphens, which the screen's own test data had underscored: caught in the browser, fixed, and the tests now use the real
+values.
+
 ## Slices
 
 The backend of managed sites comes first, because it is the part with real risk and it is checked against a real Caddy;
@@ -310,7 +363,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 | 4a | The status API (`/api/system`) with the state it needs from ingestion and the scraper (done) | Handler tests with fakes pass; the numbers match the store on a real run |
 | 4b | Managed sites, backend: migration 5, validation, the generator, apply with a managed file, rollback of both, `--managed-file`, the API (`/api/managed-sites`), done; `--backup-mode` waits for 4h | A real Caddy serves a site created through the API, refuses a duplicate hostname, and rolls it back; a killed apply is recovered |
 | 4c | Design system, app shell, Dashboard with tiles and the traffic chart (done) | Tests pass; looked at in light, dark and phone width |
-| 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |
+| 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback (done) | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |
 | 4e | Sites tab and the wizard, including "add the import" | Creating a reverse proxy from the browser works against a real Caddy |
 | 4f | Metrics tab and Logs history search | Charts match `/api/traffic`; a search finds a stored request |
 | 4g | Basic auth: bcrypt in-process, the field in the wizard, the generated `basic_auth` block | A real Caddy asks for the password of a site and accepts the right one; the password is stored nowhere |

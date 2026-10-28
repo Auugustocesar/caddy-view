@@ -91,6 +91,7 @@ Only with `--allow-edit` (a 404 otherwise):
 |---|---|
 | `GET /api/caddyfile` | The Caddyfile on disk and its SHA-256 |
 | `POST /api/caddyfile/validate` | Whether Caddy accepts a candidate, with the line of an error and any warnings |
+| `POST /api/caddyfile/format` | The text laid out as `caddy fmt` lays it out; reads nothing from Caddy or from disk |
 | `POST /api/caddyfile/apply` | Validates, writes and loads a candidate; undoes it when Caddy refuses it |
 | `GET /api/revisions`, `GET /api/revisions/{n}` | The history of attempts, newest first, and one with its content |
 | `POST /api/revisions/{n}/rollback` | Applies an earlier revision as a new one |

@@ -1,5 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, getConfig, getSites, getStatus, getSummary, getTraffic } from './api.js'
+import {
+  ApiError,
+  applyCaddyfile,
+  formatCaddyfile,
+  getCaddyfile,
+  getConfig,
+  getRevision,
+  getRevisions,
+  getSites,
+  getStatus,
+  getSummary,
+  getSystem,
+  getTraffic,
+  rollbackRevision,
+  validateCaddyfile,
+} from './api.js'
 
 function respond(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -72,5 +87,69 @@ describe('the API client', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('not json', { status: 200 })))
 
     await expect(getStatus()).rejects.toBeInstanceOf(ApiError)
+  })
+})
+
+describe('the editing calls', () => {
+  const fetchOf = (body = {}, status = 200) => {
+    const fetchMock = vi.fn().mockResolvedValue(respond(status, body))
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it.each([
+    ['getCaddyfile', () => getCaddyfile(), '/api/caddyfile'],
+    ['getSystem', () => getSystem(), '/api/system'],
+    ['getRevisions', () => getRevisions(), '/api/revisions'],
+    ['getRevisions with a page', () => getRevisions({ limit: 20, before: 5 }), '/api/revisions?limit=20&before=5'],
+    ['getRevision', () => getRevision(3), '/api/revisions/3'],
+  ])('%s reads %s', async (_name, call, path) => {
+    const fetchMock = fetchOf({ ok: true })
+    await call()
+    expect(fetchMock.mock.calls[0][0]).toBe(path)
+    expect(fetchMock.mock.calls[0][1]?.method ?? 'GET').toBe('GET')
+  })
+
+  it.each([
+    ['validateCaddyfile', () => validateCaddyfile('a {\n}'), '/api/caddyfile/validate', { content: 'a {\n}' }],
+    ['formatCaddyfile', () => formatCaddyfile('a{}'), '/api/caddyfile/format', { content: 'a{}' }],
+    ['applyCaddyfile', () => applyCaddyfile('a', 'abc'), '/api/caddyfile/apply', { content: 'a', baseSha256: 'abc' }],
+    ['rollbackRevision', () => rollbackRevision(3), '/api/revisions/3/rollback', {}],
+  ])('%s posts JSON to %s', async (_name, call, path, body) => {
+    const fetchMock = fetchOf({ ok: true })
+    await call()
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe(path)
+    expect(init.method).toBe('POST')
+    expect(init.headers['Content-Type']).toBe('application/json')
+    expect(JSON.parse(init.body)).toEqual(body)
+  })
+
+  it('returns what the server answered', async () => {
+    fetchOf({ valid: false, error: 'bad', line: 3 })
+    await expect(validateCaddyfile('x')).resolves.toEqual({ valid: false, error: 'bad', line: 3 })
+  })
+
+  it('keeps the code and the line of a refused change', async () => {
+    fetchOf({ error: 'unrecognized directive: nope', code: 'invalid', line: 4 }, 422)
+    const err = await applyCaddyfile('x', 'abc').catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.status).toBe(422)
+    expect(err.code).toBe('invalid')
+    expect(err.line).toBe(4)
+    expect(err.message).toBe('unrecognized directive: nope')
+  })
+
+  it('has no code or line for an error that came without them', async () => {
+    fetchOf({ error: 'boom' }, 500)
+    const err = await formatCaddyfile('x').catch((e) => e)
+    expect(err.code).toBeUndefined()
+    expect(err.line).toBeUndefined()
+  })
+
+  it('reports an unreachable server with status 0 on a post as on a get', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+    const err = await applyCaddyfile('x', 'abc').catch((e) => e)
+    expect(err.status).toBe(0)
   })
 })

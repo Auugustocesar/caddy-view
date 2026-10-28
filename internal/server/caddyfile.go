@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
+	"github.com/Auugustocesar/caddy-view/internal/caddyfile"
 	"github.com/Auugustocesar/caddy-view/internal/configmgr"
 	"github.com/Auugustocesar/caddy-view/internal/store"
 )
@@ -240,6 +241,22 @@ func (a *api) validate(w http.ResponseWriter, r *http.Request) {
 		warnings = res.Warnings
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"valid": true, "warnings": warnings})
+}
+
+// format lays a Caddyfile out as `caddy fmt` does. It reads nothing from Caddy or from disk: the text in, the text out.
+func (a *api) format(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Content *string `json:"content"`
+	}
+	if !readBody(w, r, &body, false) {
+		return
+	}
+	if body.Content == nil {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+	formatted := caddyfile.Format(*body.Content)
+	writeJSON(w, http.StatusOK, map[string]any{"content": formatted, "changed": formatted != *body.Content})
 }
 
 func (a *api) apply(w http.ResponseWriter, r *http.Request) {

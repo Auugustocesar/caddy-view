@@ -95,7 +95,8 @@ with `go:embed`.
 - **No external requests.** No CDN, no web fonts, no analytics. The page is served with
   `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self';
   img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, plus
-  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`.
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`. Phase 4 adds a per-response nonce to `style-src` for the
+  code editor (see `docs/phase-4.md`, slice 4d).
 - **Log lines are untrusted text.** They are only ever rendered as text nodes, never as HTML.
 - **Serving.** `GET`/`HEAD` only. `/api/` stays with the API (an unknown API path is a JSON 404, never the app).
   Files under `/assets/` carry content hashes and are cached for a year (`immutable`); `index.html` is

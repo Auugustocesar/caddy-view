@@ -35,6 +35,12 @@ function fakeFetch(url) {
       return Promise.resolve(json({ sites: [], upstreamsAvailable: true }))
     case '/api/config':
       return Promise.resolve(json(config))
+    case '/api/system':
+      return Promise.resolve(json({ editing: { enabled: true } }))
+    case '/api/caddyfile':
+      return Promise.resolve(json({ content: 'example.com {\n}\n', sha256: 'a'.repeat(64) }))
+    case '/api/revisions?limit=20':
+      return Promise.resolve(json({ revisions: [], next: null }))
     case '/api/summary?window=24h':
       return Promise.resolve(json(summary))
     case '/api/traffic?resolution=hour':
@@ -69,14 +75,15 @@ afterEach(() => {
 })
 
 describe('App navigation', () => {
-  it('has exactly the three tabs, as links', () => {
+  it('has exactly the four tabs, as links', () => {
     openAt('/')
     const nav = screen.getByRole('navigation')
     const links = Array.from(nav.querySelectorAll('a')).map((a) => [a.textContent.trim(), a.getAttribute('href')])
     expect(links).toEqual([
       ['Dashboard', '/'],
-      ['Config', '/config'],
       ['Logs', '/logs'],
+      ['Caddyfile', '/caddyfile'],
+      ['Config', '/config'],
     ])
   })
 
@@ -84,6 +91,7 @@ describe('App navigation', () => {
     ['/', 'Dashboard'],
     ['/config', 'Config'],
     ['/logs', 'Logs'],
+    ['/caddyfile', 'Caddyfile'],
     ['/unknown', 'Dashboard'],
   ])('opens %s on the %s tab', (path, label) => {
     openAt(path)
@@ -122,6 +130,11 @@ describe('App screens', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
     openAt('/')
     expect((await screen.findByRole('alert')).textContent).toMatch(/caddy-view/i)
+  })
+
+  it('opens the Caddyfile editor on its tab', async () => {
+    openAt('/caddyfile')
+    expect(await screen.findByLabelText('Caddyfile editor')).toBeTruthy()
   })
 
   it('opens the log stream only on the Logs tab', async () => {

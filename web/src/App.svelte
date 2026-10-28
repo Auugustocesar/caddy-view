@@ -4,6 +4,7 @@
   import { startPolling } from './lib/poller.js'
   import { TABS, tabFromPath } from './lib/router.js'
   import { applyTheme, loadTheme, saveTheme, toggledTheme } from './lib/theme.js'
+  import CaddyfileView from './screens/CaddyfileView.svelte'
   import ConfigView from './screens/ConfigView.svelte'
   import Dashboard from './screens/Dashboard.svelte'
   import LogView from './screens/LogView.svelte'
@@ -16,6 +17,7 @@
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     config: '<path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
     logs: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
+    caddyfile: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13l-2 2 2 2M15 13l2 2-2 2"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
   }
@@ -152,6 +154,8 @@
 <main>
   {#if tab === 'dashboard'}
     <Dashboard {status} {sites} {summary} {traffic} {historyOff} loadError={dashboardError} />
+  {:else if tab === 'caddyfile'}
+    <CaddyfileView />
   {:else if tab === 'config'}
     <ConfigView {config} loadError={configError} />
   {:else}
