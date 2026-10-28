@@ -2,6 +2,7 @@
 package caddyfile
 
 import (
+	"path"
 	"strings"
 )
 
@@ -22,27 +23,7 @@ type RelativeImport struct {
 // a relative file when it is not absolute, is not a snippet defined in the text, has no placeholder (it cannot be
 // known before Caddy expands it) and has a path separator, a glob character or a dot, which a snippet name never has.
 func RelativeImports(text string) []RelativeImport {
-	lines := strings.Split(text, "\n")
-	for i, l := range lines {
-		lines[i] = strings.TrimSuffix(l, "\r")
-	}
-
-	tokens := make([][]token, len(lines))
-	var heredoc string // the marker that ends the heredoc being skipped
-	for i, l := range lines {
-		if heredoc != "" {
-			if strings.TrimSpace(l) == heredoc {
-				heredoc = ""
-			}
-			continue
-		}
-		tokens[i] = tokenize(l)
-		for _, tok := range tokens[i] {
-			if marker, ok := heredocMarker(tok); ok {
-				heredoc = marker
-			}
-		}
-	}
+	tokens := lex(text)
 
 	snippets := map[string]bool{}
 	for _, line := range tokens {
@@ -134,4 +115,70 @@ func isAbsolute(p string) bool {
 	}
 	return len(p) >= 3 && p[1] == ':' && (p[2] == '/' || p[2] == '\\') &&
 		(p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z')
+}
+
+// ImportsFile reports whether the Caddyfile text imports the file. dir is the directory of the Caddyfile, which a
+// relative import is read against and a relative file is taken from; file may also be an absolute path. Only imports
+// at the top level count: one inside a site block imports into that site. Glob patterns match as Caddy matches them.
+func ImportsFile(text, dir, file string) bool {
+	dir = strings.ReplaceAll(dir, `\`, "/")
+	file = strings.ReplaceAll(file, `\`, "/")
+	target := file
+	if !isAbsolute(file) {
+		target = path.Join(dir, file)
+	}
+
+	depth := 0
+	for _, line := range lex(text) {
+		for j, tok := range line {
+			if tok.quoted {
+				continue
+			}
+			switch tok.text {
+			case "{":
+				depth++
+			case "}":
+				depth = max(depth-1, 0)
+			case "import":
+				if depth != 0 || j != 0 || j+1 >= len(line) {
+					continue
+				}
+				pattern := strings.ReplaceAll(line[j+1].text, `\`, "/")
+				if strings.Contains(pattern, "{") {
+					continue // a placeholder cannot be known before Caddy expands it
+				}
+				if !isAbsolute(pattern) {
+					pattern = path.Join(dir, pattern)
+				}
+				if ok, err := path.Match(path.Clean(pattern), target); err == nil && ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// lex splits Caddyfile text into the tokens of each line, counting from line 0. A comment ends its line, and the
+// lines of a heredoc are skipped, so they have no tokens.
+func lex(text string) [][]token {
+	lines := strings.Split(text, "\n")
+	tokens := make([][]token, len(lines))
+	var heredoc string // the marker that ends the heredoc being skipped
+	for i, l := range lines {
+		l = strings.TrimSuffix(l, "\r")
+		if heredoc != "" {
+			if strings.TrimSpace(l) == heredoc {
+				heredoc = ""
+			}
+			continue
+		}
+		tokens[i] = tokenize(l)
+		for _, tok := range tokens[i] {
+			if marker, ok := heredocMarker(tok); ok {
+				heredoc = marker
+			}
+		}
+	}
+	return tokens
 }

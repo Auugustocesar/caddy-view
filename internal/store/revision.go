@@ -62,6 +62,8 @@ type Revision struct {
 	SHA256 string
 	// Error is why the revision failed; empty otherwise.
 	Error string
+	// Sites is the managed part of the state this revision describes; nil for a revision made without managed sites.
+	Sites *RevisionSites
 }
 
 func validTrigger(t RevisionTrigger) bool {
@@ -102,6 +104,8 @@ func validateRevision(r Revision) error {
 		return fmt.Errorf("%w: unknown status %q", ErrInvalidRevision, r.Status)
 	case !validDigest(r.SHA256):
 		return fmt.Errorf("%w: the digest is not 64 lower-case hex characters", ErrInvalidRevision)
+	case r.Sites != nil && !validDigest(r.Sites.SHA256):
+		return fmt.Errorf("%w: the digest of the managed file is not 64 lower-case hex characters", ErrInvalidRevision)
 	case r.Time.IsZero():
 		return fmt.Errorf("%w: no time", ErrInvalidRevision)
 	}
@@ -111,6 +115,7 @@ func validateRevision(r Revision) error {
 // normalizeRevision rounds the time to the millisecond in UTC, as the SQLite store keeps it, so both stores agree.
 func normalizeRevision(r Revision) Revision {
 	r.Time = time.UnixMilli(r.Time.UnixMilli()).UTC()
+	r.Sites = cloneRevisionSites(r.Sites)
 	return r
 }
 

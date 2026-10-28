@@ -162,19 +162,8 @@ func CheckRelativeImports(text, caddyfilePath string) Result {
 // be relative to dir or an absolute path.
 func CheckImport(caddyfile, dir, target string) Result {
 	const id = "import"
-	absolute := path.Join(filepath.ToSlash(dir), target)
-	for _, line := range strings.Split(caddyfile, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "import" {
-			continue
-		}
-		arg := strings.TrimPrefix(strings.Trim(fields[1], "\"`"), "./")
-		if ok, err := path.Match(arg, target); err == nil && ok {
-			return Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("the Caddyfile imports %s", target)}
-		}
-		if ok, err := path.Match(arg, absolute); err == nil && ok {
-			return Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("the Caddyfile imports %s", target)}
-		}
+	if cf.ImportsFile(caddyfile, filepath.ToSlash(dir), target) {
+		return Result{ID: id, Status: StatusOK, Message: fmt.Sprintf("the Caddyfile imports %s", target)}
 	}
 	return Result{
 		ID:      id,

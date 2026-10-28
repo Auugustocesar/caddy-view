@@ -3,12 +3,13 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 )
 
-const revisionColumns = "number, ts, cause, status, content, sha256, error"
+const revisionColumns = "number, ts, cause, status, content, sha256, error, sites_content, sites_sha256, sites_snapshot"
 
 // AddRevision stores r with the next number.
 func (s *SQLite) AddRevision(ctx context.Context, r Revision) (Revision, error) {
@@ -22,9 +23,18 @@ func (s *SQLite) AddRevision(ctx context.Context, r Revision) (Revision, error) 
 		return Revision{}, ErrClosed
 	}
 	r = normalizeRevision(r)
+	var sitesContent, sitesSHA, sitesSnapshot any // nil, which is NULL, when there is no managed state
+	if r.Sites != nil {
+		snapshot, err := json.Marshal(r.Sites.Snapshot)
+		if err != nil {
+			return Revision{}, fmt.Errorf("store revision: %w", err)
+		}
+		sitesContent, sitesSHA, sitesSnapshot = r.Sites.Content, r.Sites.SHA256, string(snapshot)
+	}
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO config_revisions (ts, cause, status, content, sha256, error) VALUES (?, ?, ?, ?, ?, ?)",
-		r.Time.UnixMilli(), string(r.Trigger), string(r.Status), r.Content, r.SHA256, r.Error)
+		"INSERT INTO config_revisions (ts, cause, status, content, sha256, error, sites_content, sites_sha256, sites_snapshot) "+
+			"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		r.Time.UnixMilli(), string(r.Trigger), string(r.Status), r.Content, r.SHA256, r.Error, sitesContent, sitesSHA, sitesSnapshot)
 	if err != nil {
 		return Revision{}, fmt.Errorf("store revision: %w", err)
 	}
@@ -144,12 +154,22 @@ func scanRevision(row interface{ Scan(dest ...any) error }) (Revision, error) {
 		ts      int64
 		trigger string
 		status  string
+		// NULL means the revision has no managed state.
+		sitesContent, sitesSHA, sitesSnapshot sql.NullString
 	)
-	if err := row.Scan(&r.Number, &ts, &trigger, &status, &r.Content, &r.SHA256, &r.Error); err != nil {
+	if err := row.Scan(&r.Number, &ts, &trigger, &status, &r.Content, &r.SHA256, &r.Error, &sitesContent, &sitesSHA, &sitesSnapshot); err != nil {
 		return Revision{}, err
 	}
 	r.Time = time.UnixMilli(ts).UTC()
 	r.Trigger, r.Status = RevisionTrigger(trigger), RevisionStatus(status)
+	if sitesContent.Valid {
+		r.Sites = &RevisionSites{Content: sitesContent.String, SHA256: sitesSHA.String}
+		if sitesSnapshot.Valid {
+			if err := json.Unmarshal([]byte(sitesSnapshot.String), &r.Sites.Snapshot); err != nil {
+				return Revision{}, fmt.Errorf("the managed sites of revision %d: %w", r.Number, err)
+			}
+		}
+	}
 	return r, nil
 }
 

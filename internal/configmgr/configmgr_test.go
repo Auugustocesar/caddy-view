@@ -51,6 +51,8 @@ type fakeCaddy struct {
 	runningErr      error
 	candidateConfig map[string]any
 	loadIgnored     bool
+	// adaptFn, when set, is asked about every text adapted, and may refuse it.
+	adaptFn func(content string) error
 	// loadFn gets the 1-based number of the call. Nil means every load succeeds.
 	loadFn  func(ctx context.Context, n int, content string) error
 	adapted []string
@@ -65,8 +67,16 @@ func (f *fakeCaddy) Config(context.Context) (map[string]any, error) {
 
 func (f *fakeCaddy) Adapt(_ context.Context, content string) (*caddy.AdaptResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.adapted = append(f.adapted, content)
+	adaptFn := f.adaptFn
+	f.mu.Unlock()
+	if adaptFn != nil {
+		if err := adaptFn(content); err != nil {
+			return nil, err
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.adaptErr != nil {
 		return nil, f.adaptErr
 	}
@@ -110,6 +120,8 @@ type fakeStore struct {
 	addErr  error
 
 	unfinishedErr error
+	sites         []store.Site
+	replaceErr    error
 }
 
 func (f *fakeStore) AddRevision(_ context.Context, r store.Revision) (store.Revision, error) {
@@ -135,6 +147,22 @@ func (f *fakeStore) UpdateRevision(_ context.Context, number int64, status store
 		f.updates = map[int64][]store.RevisionStatus{}
 	}
 	f.updates[number] = append(f.updates[number], status)
+	return nil
+}
+
+func (f *fakeStore) Sites(context.Context) ([]store.Site, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.sites), nil
+}
+
+func (f *fakeStore) ReplaceSites(_ context.Context, sites []store.Site) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.replaceErr != nil {
+		return f.replaceErr
+	}
+	f.sites = slices.Clone(sites)
 	return nil
 }
 

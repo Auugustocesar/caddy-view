@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +39,8 @@ type Options struct {
 	AccessLogPath string
 	// History serves /api/logs, /api/traffic and /api/summary. When nil, those routes are a 404.
 	History History
+	// Sites serves the managed sites routes, which change Caddy. When nil, those routes are a 404.
+	Sites SiteManager
 	// Editor serves the Caddyfile and revision routes, which change Caddy. When nil, those routes are a 404.
 	Editor Editor
 	// Ingest, Scrape and Database feed /api/system; each one that is nil leaves its section out.
@@ -91,6 +95,10 @@ func New(c Caddy, opts Options) http.Handler {
 		routes["/api/traffic"] = onGet(a.traffic)
 		routes["/api/summary"] = onGet(a.summary)
 	}
+	if opts.Sites != nil {
+		routes["/api/managed-sites"] = onGet(a.sitesList).with(http.MethodPost, a.sitesCreate)
+		routes["/api/managed-sites/preview"] = onPost(a.sitesPreview)
+	}
 	if opts.Editor != nil {
 		routes["/api/caddyfile"] = onGet(a.caddyfile)
 		routes["/api/caddyfile/validate"] = onPost(a.validate)
@@ -114,30 +122,57 @@ func New(c Caddy, opts Options) http.Handler {
 		if !ok && opts.Editor != nil {
 			rt, ok = a.revisionRoute(r.URL.Path)
 		}
+		if !ok && opts.Sites != nil {
+			rt, ok = a.managedRoute(r.URL.Path)
+		}
 		if !ok {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		if r.Method != rt.method {
-			w.Header().Set("Allow", rt.method)
+		handler, allowed := rt.handlers[r.Method]
+		if !allowed {
+			w.Header().Set("Allow", rt.allow())
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		if rt.method == http.MethodPost && !a.sameSiteJSON(w, r) {
+		if r.Method != http.MethodGet && !a.sameSiteJSON(w, r) {
 			return
 		}
-		rt.handler(w, r)
+		handler(w, r)
 	}))
 }
 
-// route is a handler and the one method it answers.
+// route is what a path answers: a handler for each method it allows, in the order they are named in Allow.
 type route struct {
-	method  string
-	handler http.HandlerFunc
+	handlers map[string]http.HandlerFunc
+	order    []string
 }
 
-func onGet(h http.HandlerFunc) route  { return route{http.MethodGet, h} }
-func onPost(h http.HandlerFunc) route { return route{http.MethodPost, h} }
+func newRoute(method string, h http.HandlerFunc) route {
+	return route{handlers: map[string]http.HandlerFunc{method: h}, order: []string{method}}
+}
+
+func onGet(h http.HandlerFunc) route  { return newRoute(http.MethodGet, h) }
+func onPost(h http.HandlerFunc) route { return newRoute(http.MethodPost, h) }
+
+// with returns the route that also answers method.
+func (r route) with(method string, h http.HandlerFunc) route {
+	handlers := maps.Clone(r.handlers)
+	handlers[method] = h
+	return route{handlers: handlers, order: append(slices.Clone(r.order), method)}
+}
+
+// wrap returns the route with every handler passed through f.
+func (r route) wrap(f func(http.HandlerFunc) http.HandlerFunc) route {
+	handlers := make(map[string]http.HandlerFunc, len(r.handlers))
+	for method, h := range r.handlers {
+		handlers[method] = f(h)
+	}
+	return route{handlers: handlers, order: r.order}
+}
+
+// allow is the value of the Allow header.
+func (r route) allow() string { return strings.Join(r.order, ", ") }
 
 // isAPIPath reports whether a path belongs to the API, which never falls through to the UI.
 func isAPIPath(p string) bool { return p == "/api" || strings.HasPrefix(p, "/api/") }

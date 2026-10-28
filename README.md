@@ -94,6 +94,9 @@ Only with `--allow-edit` (a 404 otherwise):
 | `POST /api/caddyfile/apply` | Validates, writes and loads a candidate; undoes it when Caddy refuses it |
 | `GET /api/revisions`, `GET /api/revisions/{n}` | The history of attempts, newest first, and one with its content |
 | `POST /api/revisions/{n}/rollback` | Applies an earlier revision as a new one |
+| `GET /api/managed-sites`, `POST /api/managed-sites` | The sites caddy-view manages, and creating one (see "Managed sites") |
+| `POST /api/managed-sites/preview` | Checks a site and shows the managed file it would produce, without applying |
+| `PUT /api/managed-sites/{id}`, `DELETE /api/managed-sites/{id}` | Changing and removing a managed site |
 
 Flags:
 
@@ -112,6 +115,7 @@ Flags:
 | `--max-db-size` | `1GiB` | Most the history may hold; above it the oldest raw data is deleted. `0` turns the cap off |
 | `--caddyfile` | none | The Caddyfile caddy-view may edit; used with `--allow-edit` |
 | `--allow-edit` | off | Let the API read and change the Caddyfile. Needs `--caddyfile` and the history database (not `--no-persist`) |
+| `--managed-file` | `conf.d/caddy-view-sites.caddy` | The file the managed sites are written to, relative to the directory of the Caddyfile unless it is an absolute path. The Caddyfile must import it by its full path |
 
 ### Editing the Caddyfile
 
@@ -146,6 +150,39 @@ applied revision, or if Caddy runs something other than the file (a reload from 
 Only one caddy-view at a time can edit a Caddyfile: `serve --allow-edit` takes a lock kept in `.caddy-view.lock` next
 to it and refuses to start while another process holds it. The system frees the lock when that process ends, however it
 ends, so there is no stale lock to delete. The design is in [docs/phase-3.md](docs/phase-3.md).
+
+### Managed sites
+
+caddy-view can keep some sites for you: a reverse proxy or a redirect, described as data and written to the managed
+file, which your Caddyfile imports. Sites that are already in your Caddyfile are not touched and cannot be listed here.
+
+```caddyfile
+# in your Caddyfile, once, with the full path of the managed file's folder:
+import /etc/caddy/conf.d/*.caddy
+```
+
+```sh
+curl -s -X POST -H 'Content-Type: application/json' http://127.0.0.1:8484/api/managed-sites \
+  -d '{"hostname": "app.example.com", "kind": "proxy", "upstreams": ["10.0.0.5:8080"], "tls": "automatic"}'
+```
+
+A site has a `hostname` (a DNS name, `localhost` or an IP; no port or wildcard), a `kind` (`proxy` or `redirect`) and:
+for a proxy, one or more `upstreams` (`host`, `host:port` or `https://host:port`) and `skipTlsVerify` for a self-signed
+`https://` upstream; for a redirect, a `redirectTarget` (`https://…`, which may end in `{uri}`) and a `redirectCode`
+(301, 302, 307 or 308). Every site also has a `tls` mode (`automatic`, `internal` for Caddy's own certificate
+authority, or `off` for plain HTTP), `accessLog` (write the site's requests to the access log caddy-view reads, when
+there is one), and `enabled` (a disabled site stays in the list but is left out of the file).
+
+A change is applied as a whole or not at all. Caddy checks the managed file and the Caddyfile together, loads them,
+and caddy-view reads back what runs; if anything fails, the managed file is put back, the list of sites is unchanged,
+and the answer says that nothing was applied and which site is the problem. A hostname that your own Caddyfile already
+serves is refused that way. Every change is a revision, so the history and rollback of the Caddyfile cover the managed
+file and the list of sites too.
+
+caddy-view overwrites only a managed file that is missing, empty or exactly as it wrote it last: if you edit the file
+by hand, the next change is refused with `managed-file-edited` rather than lose your edit. The Caddyfile must import the
+managed file (`not-imported` otherwise), and a change to the Caddyfile that would stop importing it while there are
+sites is refused too.
 
 ### Security notes
 

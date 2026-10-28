@@ -1,0 +1,16 @@
+	carried, err := m.carried(ctx)
+	if err != nil {
+		return store.Revision{}, err
+	}
+	if carried != nil && len(carried.Snapshot) > 0 && !m.importsManaged(req.Content) {
+		// Sites are served only through that import: dropping it would silently take them all down.
+		return store.Revision{}, fmt.Errorf("%w: the %d managed sites would stop being served", ErrNotImported, len(carried.Snapshot))
+	}
+	rev, err := m.store.AddRevision(ctx, store.Revision{
+		Time:    m.now(),
+		Trigger: trigger,
+		Status:  store.StatusPending,
+		Content: req.Content,
+		SHA256:  digest(req.Content),
+		Sites:   carried,
+	})

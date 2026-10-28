@@ -18,7 +18,7 @@ func (m *Memory) AddRevision(ctx context.Context, r Revision) (Revision, error) 
 	r = normalizeRevision(r)
 	r.Number = int64(len(m.revisions) + 1)
 	m.revisions = append(m.revisions, r)
-	return r, nil
+	return cloneRevision(r), nil
 }
 
 // UpdateRevision sets the status and the error of a revision.
@@ -54,7 +54,7 @@ func (m *Memory) LatestApplied(ctx context.Context) (Revision, bool, error) {
 	}
 	for i := len(m.revisions) - 1; i >= 0; i-- {
 		if m.revisions[i].Status == StatusApplied {
-			return m.revisions[i], true, nil
+			return cloneRevision(m.revisions[i]), true, nil
 		}
 	}
 	return Revision{}, false, nil
@@ -73,7 +73,7 @@ func (m *Memory) Revision(ctx context.Context, number int64) (Revision, error) {
 	if number < 1 || number > int64(len(m.revisions)) {
 		return Revision{}, ErrNotFound
 	}
-	return m.revisions[number-1], nil
+	return cloneRevision(m.revisions[number-1]), nil
 }
 
 // Revisions returns the revisions that match q, newest first.
@@ -95,7 +95,7 @@ func (m *Memory) Revisions(ctx context.Context, q RevisionQuery) ([]Revision, er
 		if q.Before > 0 && m.revisions[i].Number >= q.Before {
 			continue
 		}
-		out = append(out, m.revisions[i])
+		out = append(out, cloneRevision(m.revisions[i]))
 	}
 	return out, nil
 }
@@ -113,7 +113,7 @@ func (m *Memory) Unfinished(ctx context.Context) ([]Revision, error) {
 	out := []Revision{}
 	for _, r := range m.revisions {
 		if r.Status == StatusPending || r.Status == StatusLoading {
-			out = append(out, r)
+			out = append(out, cloneRevision(r))
 		}
 	}
 	return out, nil

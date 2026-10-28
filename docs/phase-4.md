@@ -107,6 +107,104 @@ http://plain.example.com {
 }
 ```
 
+### Slice 4b in detail: managed sites, backend
+
+**Packages and types.**
+- `store.Site` is the row: `ID` (32 hex characters, made by the server), `Hostname`, `Kind` (`proxy`, `redirect`),
+  `Upstreams`, `SkipTLSVerify`, `TLS` (`automatic`, `internal`, `off`), `RedirectTarget`, `RedirectCode`, `AccessLog`,
+  `Enabled`, `CreatedAt`, `UpdatedAt`. Migration 5 adds the `sites` table and, to `config_revisions`, the columns
+  `sites_content`, `sites_sha256` and `sites_snapshot` (JSON of the rows). `store.Revision` gets `Sites *RevisionSites`
+  (`Content`, `SHA256`, `Snapshot []Site`); `nil` is a revision made before there were managed sites, or without them.
+  Both stores get `Sites(ctx)` (ordered by hostname) and `ReplaceSites(ctx, []Site)`, which replaces the whole table
+  atomically and refuses a duplicate ID or hostname with `ErrInvalidSite`; the contract suite covers both.
+- `internal/sites` is pure: `Normalize`, `Validate` and `Generate`. `Validate(site, others)` returns every problem as a
+  `FieldError{Field, Message}` (fields: `hostname`, `kind`, `upstreams`, `skipTlsVerify`, `tls`, `redirectTarget`,
+  `redirectCode`, `accessLog`), so the interface can mark the field. `Generate(sites, opts)` returns the text and, for
+  each block, the lines it occupies, so that a line of the managed file can be turned back into a site.
+- `internal/caddyfile` gains `ImportsFile(text, dir, target)`, built on the lexer of B1: does this Caddyfile import this
+  file, by a relative path from `dir` or an absolute one? `doctor`'s `import` check becomes a call to it, so there is one
+  answer to the question.
+
+**Validation rules** (all in `sites.Validate`, tested as a table):
+- *Hostname*: required; lower-cased by `Normalize`; labels of letters, digits and hyphens that do not start or end with a
+  hyphen, at most 63 characters each and 253 in all; `localhost`; an IPv4 or IPv6 address (written in brackets in the
+  file). No scheme, port, path, wildcard, space or trailing dot. Unique among the managed sites, ignoring case.
+- *Kind*: `proxy` or `redirect`; the fields of the other kind must be empty.
+- *Upstreams* (proxy): at least one, no duplicates; each `[http://|https://]host[:port]` with a valid host, a port from 1
+  to 65535 if present, and no path, query or user. `Normalize` drops a leading `http://`, which is the default.
+- *SkipTLSVerify*: only when some upstream is `https://`.
+- *Redirect*: the target is an absolute `http://` or `https://` URL without spaces, quotes or braces, except the
+  placeholder `{uri}`; the code is 301, 302, 307 or 308 (`Normalize` makes 0 into 301).
+- *TLS*: `automatic`, `internal` or `off`; `Normalize` makes empty into `automatic`.
+- *AccessLog*: allowed only when an access log file is known (below).
+
+**The generated file** is fixed by golden tests: a header comment, the snippet `caddy-view-access-log` when some enabled
+site wants it, then the enabled sites sorted by hostname, each block with `import caddy-view-access-log`, `tls internal`,
+then `reverse_proxy …` or `redir …` in that order. `tls off` writes the address as `http://host`. The access log path
+comes from `Options.AccessLog`, which `serve` fills from `--access-log` or from the running Caddy.
+
+**The state of an apply.** A revision now describes the whole state: the Caddyfile text and, when a managed file is
+configured, the managed text with the rows. The three operations differ only in what they change:
+- `Apply` (an edit of the Caddyfile) changes the Caddyfile and carries the managed state along unchanged;
+- `ApplySites(desired)` changes the managed state and leaves the Caddyfile as it is on disk;
+- `Rollback(n)` restores both, and the rows, from the revision (a revision without `Sites` restores only the Caddyfile).
+
+**`ApplySites` step by step**, with `ManagedPath` set:
+1. *Preconditions*, which record nothing: every site is valid (`ErrInvalidSite` with the field errors); the Caddyfile has no
+   relative import (B1) and does import the managed file (`ErrNotImported`); the managed file is in a state caddy-view
+   may overwrite: missing, empty, or equal to the text of the last applied revision that had one. Anything else is
+   `ErrManagedEdited`: it was edited by hand and would be lost.
+2. Record the revision `pending`, with the Caddyfile text and the candidate managed state.
+3. Ask Caddy (`/adapt`) about the managed text alone; a rejection is `ErrSiteRejected` naming the site whose block holds the
+   line.
+4. `loading`; write the managed file atomically, remembering what it was (or that it did not exist).
+5. Adapt the Caddyfile again, now that it sees the new sites. A duplicate hostname shows up here; the error is mapped to the
+   site when it names the managed file and a line, or, failing that, names a managed hostname.
+6. Load the Caddyfile text and verify what Caddy runs, as in phase 3.
+7. Only now save the rows (`ReplaceSites`) and mark the revision `applied`. On any failure after step 4 the managed file
+   is put back (removed, if it did not exist) and Caddy reloaded; the rows were never touched, which is the transaction.
+`Recover` (B2) gets the same understanding: a `loading` revision with `Sites` is `applied` only if the managed file and
+the Caddyfile are both what the revision says and Caddy runs them, and then the rows are set from the snapshot, which
+is safe to repeat if the crash came after they were saved.
+
+**The API** (only with `--allow-edit`; every non-`GET` needs `application/json` and the same origin, as before):
+
+| Route | Does |
+|---|---|
+| `GET /api/managed-sites` | `{"sites": [...]}`, ordered by hostname |
+| `POST /api/managed-sites/preview` | Validates a site as it would be added or changed and answers the generated text, without applying |
+| `POST /api/managed-sites` | Creates a site and applies; `{"site", "revision"}` |
+| `PUT /api/managed-sites/{id}` | Replaces a site's fields and applies; 404 when the id is unknown |
+| `DELETE /api/managed-sites/{id}` | Removes a site and applies; `{"revision"}` |
+
+A site is `{"id", "hostname", "kind", "upstreams", "skipTlsVerify", "tls", "redirectTarget", "redirectCode", "accessLog",
+"enabled", "createdAt", "updatedAt"}`; a request carries the editable fields only, and unknown ones are a 400. Failures,
+all saying that nothing was applied and the table is unchanged: `invalid-site` (422) with `errors` as a list of
+`{"site", "field", "message"}`; `not-imported` (422); `managed-file-edited` (409); `site-rejected` (422) with the `site`
+and Caddy's message and line; and the existing `relative-import`, `apply-failed`, `recovery-required` and `conflict`.
+
+**`serve`** gets `--managed-file` (default `conf.d/caddy-view-sites.caddy`, relative to the Caddyfile's directory, as in
+`doctor`) and gives the manager the access log path. `--backup-mode` waits for 4h.
+
+**Tests.** Against fakes for the pure parts, the stores and the manager, as before; then against a real Caddy: a site
+created through the manager is served and reaches a real backend, a hostname the hand-written Caddyfile already serves is
+refused with the right site named and Caddy untouched, and a rollback restores both files.
+
+
+**Done, and what the real Caddy taught.** Built as written, with these findings:
+- Caddy reports a hostname that is served twice as `ambiguous site definition: http://hand.localhost`, **without a file or a
+  line**. So the site is found by the hostname in the message (matched as a whole word, so `a.example.com` is not
+  found inside `aa.example.com`), and by the line only when Caddy does give `<managed file>:<line>`; a message that
+  names neither is an invalid Caddyfile, not a site.
+- A change of the Caddyfile that stops importing the managed file would silently take every managed site down, so
+  `Apply` refuses it with `ErrNotImported` while there are sites. This was not in the plan; it is the same promise as the
+  admin guard of phase 3.
+- Loading is checked as in phase 3: after `/load`, what Caddy runs must be what was adapted, and the managed file and the
+  Caddyfile are put back if not. The rows are saved only after that, and a failure to save them is `recovery-required`.
+- `doctor`'s `import` check now asks `caddyfile.ImportsFile`, so `doctor`, `ApplySites` and the guard above agree on what
+  "imports the managed file" means, including that an import inside a site block does not count.
+- The managed sites are in `Revision.Sites`, copied on the way in and out of both stores, so a caller cannot change a
+  stored revision by changing what it holds.
 ### The status API (B5)
 
 `GET /api/system`, read-only and always available, answers what the Config tab and the editing warnings need:
@@ -173,7 +271,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 | Slice | Deliverable | Done when |
 |---|---|---|
 | 4a | The status API (`/api/system`) with the state it needs from ingestion and the scraper (done) | Handler tests with fakes pass; the numbers match the store on a real run |
-| 4b | Managed sites, backend: migration 5, validation, the generator, apply with a managed file, rollback of both, `--managed-file`, `--backup-mode`, the API (`/api/managed-sites`) | A real Caddy serves a site created through the API, refuses a duplicate hostname, and rolls it back; a killed apply is recovered |
+| 4b | Managed sites, backend: migration 5, validation, the generator, apply with a managed file, rollback of both, `--managed-file`, the API (`/api/managed-sites`), done; `--backup-mode` waits for 4h | A real Caddy serves a site created through the API, refuses a duplicate hostname, and rolls it back; a killed apply is recovered |
 | 4c | Design system, app shell, Dashboard with tiles and the traffic chart | Tests pass; looked at in light, dark and phone width |
 | 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |
 | 4e | Sites tab and the wizard, including "add the import" | Creating a reverse proxy from the browser works against a real Caddy |

@@ -364,8 +364,10 @@ func TestSQLiteAddsRevisionsToAVersion3Database(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.ExecContext(ctx, "DROP TABLE IF EXISTS config_revisions"); err != nil {
-		t.Fatal(err)
+	for _, table := range []string{"config_revisions", "sites"} { // sites came with a later migration, which runs again
+		if _, err := raw.ExecContext(ctx, "DROP TABLE IF EXISTS "+table); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := raw.ExecContext(ctx, "PRAGMA user_version = 3"); err != nil {
 		t.Fatal(err)
@@ -380,5 +382,70 @@ func TestSQLiteAddsRevisionsToAVersion3Database(t *testing.T) {
 		Time: base, Trigger: store.TriggerManualEdit, Status: store.StatusPending, Content: "a", SHA256: strings.Repeat("ab", 32),
 	}); err != nil {
 		t.Errorf("AddRevision after the upgrade: %v", err)
+	}
+}
+
+func TestMemoryStoreMeetsTheSitesContract(t *testing.T) {
+	storetest.RunSites(t, func(t *testing.T) storetest.SiteStore { return store.NewMemory() })
+}
+
+func TestSQLiteStoreMeetsTheSitesContract(t *testing.T) {
+	storetest.RunSites(t, func(t *testing.T) storetest.SiteStore { return openForContract(t) })
+}
+
+func TestSQLiteKeepsSitesAcrossAReopen(t *testing.T) {
+	path := dbPath(t)
+	ctx := context.Background()
+	first := open(t, path)
+	site := store.Site{
+		ID: "a", Hostname: "a.example.com", Kind: store.SiteProxy, Upstreams: []string{"10.0.0.1:8080", "https://10.0.0.2"},
+		SkipTLSVerify: true, TLS: store.TLSInternal, AccessLog: true, Enabled: true, CreatedAt: base, UpdatedAt: base,
+	}
+	if err := first.ReplaceSites(ctx, []store.Site{site}); err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+
+	got, err := open(t, path).Sites(ctx)
+	if err != nil || len(got) != 1 || got[0].Hostname != "a.example.com" || len(got[0].Upstreams) != 2 || !got[0].SkipTLSVerify {
+		t.Errorf("Sites after a reopen = %+v, %v, want the stored site", got, err)
+	}
+}
+
+func TestSQLiteAddsSitesToAVersion4Database(t *testing.T) {
+	path := dbPath(t)
+	ctx := context.Background()
+	open(t, path).Close()
+
+	// Turn the database back into what the previous release left: no sites table, no managed columns, version 4.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, "DROP TABLE IF EXISTS sites"); err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"sites_content", "sites_sha256", "sites_snapshot"} {
+		var has int
+		if err := raw.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('config_revisions') WHERE name = ?", column).Scan(&has); err != nil {
+			t.Fatal(err)
+		}
+		if has > 0 {
+			if _, err := raw.ExecContext(ctx, "ALTER TABLE config_revisions DROP COLUMN "+column); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := raw.ExecContext(ctx, "PRAGMA user_version = 4"); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	s := open(t, path)
+	if v, err := s.SchemaVersion(ctx); err != nil || v != store.LatestSchemaVersion || v < 5 {
+		t.Fatalf("SchemaVersion = %d, %v, want the latest, which is at least 5", v, err)
+	}
+	if err := s.ReplaceSites(ctx, []store.Site{{ID: "a", Hostname: "a.example.com", Kind: store.SiteProxy, Upstreams: []string{"10.0.0.1"}, TLS: store.TLSAutomatic, Enabled: true, CreatedAt: base, UpdatedAt: base}}); err != nil {
+		t.Errorf("ReplaceSites after the upgrade: %v", err)
 	}
 }

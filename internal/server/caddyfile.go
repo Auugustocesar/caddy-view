@@ -113,6 +113,9 @@ type failureJSON struct {
 	Code     string        `json:"code"`
 	Line     int           `json:"line,omitempty"`
 	Revision *revisionJSON `json:"revision,omitempty"`
+	// Errors and Site belong to the managed sites: the problems found, or the site Caddy rejected.
+	Errors []siteProblemJSON `json:"errors,omitempty"`
+	Site   *siteRefJSON      `json:"site,omitempty"`
 }
 
 // internal logs the cause of a failure that is not the client's and answers a generic 500.
@@ -123,8 +126,40 @@ func (a *api) internal(w http.ResponseWriter, r *http.Request, err error) {
 
 // changeFailed answers an apply or a rollback that did not succeed.
 func (a *api) changeFailed(w http.ResponseWriter, r *http.Request, rev store.Revision, err error) {
+	a.changeFailedWith(w, r, rev, err, phrases{})
+}
+
+// phrases are what a failure says about the change, for routes whose change is not a whole file: that nothing was
+// applied, and the table of sites is as it was. The zero value adds nothing.
+type phrases struct {
+	notApplied string // put before the message of a failure that left everything as it was
+	notCleanly string // put before the message of a failure that did not
+}
+
+func (a *api) changeFailedWith(w http.ResponseWriter, r *http.Request, rev store.Revision, err error, say phrases) {
 	var adaptErr *caddy.AdaptError
 	switch {
+	case errors.Is(err, configmgr.ErrInvalidSite):
+		f := failureJSON{Error: say.notApplied + err.Error(), Code: "invalid-site"}
+		var invalid *configmgr.InvalidSitesError
+		if errors.As(err, &invalid) {
+			f.Errors = siteProblems(invalid)
+		}
+		writeJSON(w, http.StatusUnprocessableEntity, f)
+	case errors.Is(err, configmgr.ErrNotImported):
+		writeJSON(w, http.StatusUnprocessableEntity, failureJSON{Error: say.notApplied + err.Error(), Code: "not-imported"})
+	case errors.Is(err, configmgr.ErrManagedEdited):
+		writeJSON(w, http.StatusConflict, failureJSON{Error: say.notApplied + err.Error(), Code: "managed-file-edited"})
+	case errors.Is(err, configmgr.ErrNoManagedFile):
+		writeJSON(w, http.StatusUnprocessableEntity, failureJSON{Error: say.notApplied + err.Error(), Code: "no-managed-file"})
+	case errors.Is(err, configmgr.ErrSiteRejected):
+		f := failureJSON{Error: say.notApplied + err.Error(), Code: "site-rejected"}
+		var rejected *configmgr.SiteError
+		if errors.As(err, &rejected) {
+			f.Site, f.Line = &siteRefJSON{ID: rejected.SiteID, Hostname: rejected.Hostname}, rejected.Line
+			f.Error = say.notApplied + rejected.Error()
+		}
+		writeJSON(w, http.StatusUnprocessableEntity, f)
 	case errors.Is(err, configmgr.ErrConflict):
 		writeJSON(w, http.StatusConflict, failureJSON{
 			Error: "the Caddyfile changed since it was read: reload it and apply again", Code: "conflict",
@@ -136,19 +171,19 @@ func (a *api) changeFailed(w http.ResponseWriter, r *http.Request, rev store.Rev
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, f)
 	case errors.Is(err, configmgr.ErrRelativeImport):
-		f := failureJSON{Error: err.Error(), Code: "relative-import"}
+		f := failureJSON{Error: say.notApplied + err.Error(), Code: "relative-import"}
 		var relative *configmgr.RelativeImportError
 		if errors.As(err, &relative) {
 			f.Line = relative.Line
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, f)
 	case errors.Is(err, configmgr.ErrAdminMoved):
-		writeJSON(w, http.StatusUnprocessableEntity, failureJSON{Error: err.Error(), Code: "admin-moved"})
+		writeJSON(w, http.StatusUnprocessableEntity, failureJSON{Error: say.notApplied + err.Error(), Code: "admin-moved"})
 	case errors.Is(err, configmgr.ErrApplyFailed):
-		writeJSON(w, http.StatusBadGateway, failureJSON{Error: err.Error(), Code: "apply-failed", Revision: revisionAnswer(rev, false)})
+		writeJSON(w, http.StatusBadGateway, failureJSON{Error: say.notApplied + err.Error(), Code: "apply-failed", Revision: revisionAnswer(rev, false)})
 	case errors.Is(err, configmgr.ErrRecoveryRequired):
 		a.log.Error("the Caddyfile needs manual recovery", "revision", rev.Number, "error", err)
-		writeJSON(w, http.StatusInternalServerError, failureJSON{Error: err.Error(), Code: "recovery-required", Revision: revisionAnswer(rev, false)})
+		writeJSON(w, http.StatusInternalServerError, failureJSON{Error: say.notCleanly + err.Error(), Code: "recovery-required", Revision: revisionAnswer(rev, false)})
 	case errors.Is(err, store.ErrNotFound):
 		writeJSON(w, http.StatusNotFound, failureJSON{Error: "revision not found", Code: "not-found"})
 	default:
@@ -285,17 +320,18 @@ func (a *api) revisionRoute(path string) (route, bool) {
 	}
 	n, err := strconv.ParseInt(num, 10, 64)
 	if err != nil || n < 1 {
-		rt.handler = func(w http.ResponseWriter, _ *http.Request) {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid revision number %q: use a positive whole number", num))
+		return rt.wrap(func(http.HandlerFunc) http.HandlerFunc {
+			return func(w http.ResponseWriter, _ *http.Request) {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid revision number %q: use a positive whole number", num))
+			}
+		}), true
+	}
+	return rt.wrap(func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("number", num)
+			h(w, r)
 		}
-		return rt, true
-	}
-	handler := rt.handler
-	rt.handler = func(w http.ResponseWriter, r *http.Request) {
-		r.SetPathValue("number", num)
-		handler(w, r)
-	}
-	return rt, true
+	}), true
 }
 
 // revisionNumber is the number in the path; revisionRoute has already checked it.

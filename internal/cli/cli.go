@@ -136,8 +136,11 @@ func (e editor) Revisions(ctx context.Context, q store.RevisionQuery) ([]store.R
 
 // newEditor builds the editor for --allow-edit and warns about what that allows and about a Caddyfile that was
 // changed behind caddy-view's back.
-func newEditor(ctx context.Context, client *caddy.Client, hist history, path string, logger *slog.Logger) editor {
-	mgr := configmgr.New(client, hist, configmgr.Options{Path: path, Logger: logger})
+func newEditor(ctx context.Context, client *caddy.Client, hist history, path, managedPath, accessLog string, logger *slog.Logger) editor {
+	mgr := configmgr.New(client, hist, configmgr.Options{
+		Path: path, ManagedPath: managedPath, Logger: logger,
+		AccessLog: func(ctx context.Context) string { return accessLogOf(ctx, client, accessLog) },
+	})
 	logger.Warn("--allow-edit is on: whoever can reach this address can change Caddy's configuration", "caddyfile", path)
 	// First resolve what a crash left unfinished, so that what follows compares against the truth.
 	if _, err := mgr.Recover(ctx); err != nil {
@@ -210,6 +213,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	maxDBSize := fs.String("max-db-size", "1GiB", "most the history may hold, such as 512MiB or 1GiB; above it the oldest raw data is deleted; 0 turns the cap off")
 	storeQuery := fs.Bool("store-query", false, "keep query strings in the stored request paths (they often carry tokens)")
 	caddyfile := fs.String("caddyfile", "", "path to the Caddyfile caddy-view may edit; used with --allow-edit")
+	managedFile := fs.String("managed-file", "conf.d/caddy-view-sites.caddy", "file caddy-view writes the sites it manages to, relative to the Caddyfile directory; the Caddyfile must import it by its full path")
 	allowEdit := fs.Bool("allow-edit", false, "let the UI and API read and change the Caddyfile; needs --caddyfile and the history database")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -280,8 +284,9 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	scraper := scrape.New(client, hist, scrape.Options{Logger: logger})
 	opts.Ingest, opts.Scrape = ingestion, scraper
 	if *allowEdit {
-		opts.Editor = newEditor(ctx, client, hist, *caddyfile, logger)
-		opts.CaddyfilePath = *caddyfile
+		path, managed := editPaths(*caddyfile, *managedFile)
+		ed := newEditor(ctx, client, hist, path, managed, *accessLog, logger)
+		opts.Editor, opts.Sites, opts.CaddyfilePath = ed, ed, path
 	}
 	handler := server.New(client, opts)
 	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.
@@ -443,4 +448,36 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.w.Write(p)
+}
+
+// editPaths gives the absolute path of the Caddyfile and of the managed file, which is relative to the directory of
+// the Caddyfile unless it is already absolute.
+func editPaths(caddyfile, managedFile string) (path, managed string) {
+	path = caddyfile
+	if abs, err := filepath.Abs(caddyfile); err == nil {
+		path = abs
+	}
+	managed = managedFile
+	if !filepath.IsAbs(managed) {
+		managed = filepath.Join(filepath.Dir(path), managed)
+	}
+	return path, managed
+}
+
+// accessLogOf is the access log file that managed sites may write to: the one given with --access-log, or the first
+// JSON file log of the running Caddy, or "" when there is none.
+func accessLogOf(ctx context.Context, client *caddy.Client, given string) string {
+	if given != "" {
+		return given
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cfg, err := client.Config(ctx)
+	if err != nil {
+		return ""
+	}
+	if files := caddy.AccessLogFiles(cfg); len(files) > 0 {
+		return files[0]
+	}
+	return ""
 }

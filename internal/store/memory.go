@@ -19,6 +19,7 @@ type Memory struct {
 	metrics   []MetricSample // in insertion order
 	rollups   map[rollupKey]rollupRow
 	revisions []Revision // in insertion order, so the number is the index plus one
+	sites     []Site
 }
 
 // NewMemory returns an empty in-memory store.

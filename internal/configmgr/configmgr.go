@@ -77,6 +77,9 @@ type RevisionStore interface {
 	Revision(ctx context.Context, number int64) (store.Revision, error)
 	// Unfinished returns the revisions still pending or loading, oldest first.
 	Unfinished(ctx context.Context) ([]store.Revision, error)
+	// Sites returns the managed sites, and ReplaceSites replaces them all at once.
+	Sites(ctx context.Context) ([]store.Site, error)
+	ReplaceSites(ctx context.Context, sites []store.Site) error
 }
 
 // Options configures a Manager.
@@ -87,6 +90,11 @@ type Options struct {
 	Now func() time.Time
 	// Logger receives operational logs. A nil Logger discards them.
 	Logger *slog.Logger
+	// ManagedPath is the file caddy-view generates from the managed sites, an absolute path that the Caddyfile imports.
+	// Empty means there are no managed sites.
+	ManagedPath string
+	// AccessLog gives the access log file the sites may write to, or "" when none is known.
+	AccessLog func(ctx context.Context) string
 }
 
 // File is the Caddyfile as it is on disk.
@@ -180,8 +188,21 @@ func (m *Manager) resolve(ctx context.Context, r store.Revision, cur File, curEr
 	case cur.SHA256 != r.SHA256:
 		return store.StatusFailed, "interrupted; the Caddyfile was not changed to this revision"
 	}
+	if r.Sites != nil && m.opts.ManagedPath != "" {
+		if managed, err := m.readManaged(); err != nil {
+			return store.StatusRecoveryRequired, fmt.Sprintf("interrupted, and the managed file cannot be read now: %v", err)
+		} else if !managed.existed || digest(managed.content) != r.Sites.SHA256 {
+			return store.StatusFailed, "interrupted; the managed file was not changed to this revision"
+		}
+	}
 	switch state, why := m.runState(ctx, cur.Content); state {
 	case RunMatches:
+		if r.Sites != nil && m.opts.ManagedPath != "" {
+			// The rows are saved after Caddy runs the file; this finishes what was cut short, and is safe to repeat.
+			if err := m.store.ReplaceSites(ctx, r.Sites.Snapshot); err != nil {
+				return store.StatusRecoveryRequired, fmt.Sprintf("Caddy runs it, but the sites could not be saved: %v", err)
+			}
+		}
 		return store.StatusApplied, "interrupted after Caddy loaded it, before it was recorded; Caddy runs it"
 	default:
 		return store.StatusRecoveryRequired, "interrupted after the Caddyfile was written, and Caddy may not run it: " + why
@@ -309,6 +330,9 @@ func (m *Manager) Rollback(ctx context.Context, number int64) (store.Revision, e
 	if err != nil {
 		return store.Revision{}, err
 	}
+	if m.opts.ManagedPath != "" && old.Sites != nil {
+		return m.rollbackManaged(ctx, old, cur)
+	}
 	return m.apply(ctx, ApplyRequest{Content: old.Content, BaseSHA256: cur.SHA256, Trigger: store.TriggerRollback})
 }
 
@@ -345,12 +369,21 @@ func (m *Manager) apply(ctx context.Context, req ApplyRequest) (store.Revision, 
 	if trigger == "" {
 		trigger = store.TriggerManualEdit
 	}
+	carried, err := m.carried(ctx)
+	if err != nil {
+		return store.Revision{}, err
+	}
+	if carried != nil && len(carried.Snapshot) > 0 && !m.importsManaged(req.Content) {
+		// Sites are served only through that import: dropping it would silently take them all down.
+		return store.Revision{}, fmt.Errorf("%w: the %d managed sites would stop being served", ErrNotImported, len(carried.Snapshot))
+	}
 	rev, err := m.store.AddRevision(ctx, store.Revision{
 		Time:    m.now(),
 		Trigger: trigger,
 		Status:  store.StatusPending,
 		Content: req.Content,
 		SHA256:  digest(req.Content),
+		Sites:   carried,
 	})
 	if err != nil {
 		return store.Revision{}, fmt.Errorf("record the revision: %w", err)
