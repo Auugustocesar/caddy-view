@@ -45,9 +45,13 @@ type Site struct {
 	RedirectTarget string
 	RedirectCode   int
 	AccessLog      bool
-	Enabled        bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// BasicAuthUser and BasicAuthHash ask for a username and a password before the site answers. The hash is bcrypt; the
+	// password itself is never stored. Both are empty, or neither.
+	BasicAuthUser string
+	BasicAuthHash string
+	Enabled       bool
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // RevisionSites is the managed part of a revision: the text of the managed file and the rows it was generated from.
@@ -72,6 +76,8 @@ func validateSites(all []Site) error {
 			return fmt.Errorf("%w: site %s has the unknown kind %q", ErrInvalidSite, s.ID, s.Kind)
 		case s.TLS != TLSAutomatic && s.TLS != TLSInternal && s.TLS != TLSOff:
 			return fmt.Errorf("%w: site %s has the unknown TLS mode %q", ErrInvalidSite, s.ID, s.TLS)
+		case (s.BasicAuthUser == "") != (s.BasicAuthHash == ""):
+			return fmt.Errorf("%w: site %s has half of a password: a user and a hash go together", ErrInvalidSite, s.ID)
 		case ids[s.ID]:
 			return fmt.Errorf("%w: the ID %s is used twice", ErrInvalidSite, s.ID)
 		case hosts[strings.ToLower(s.Hostname)]:

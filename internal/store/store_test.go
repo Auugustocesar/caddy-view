@@ -457,3 +457,49 @@ func TestSQLiteAddsSitesToAVersion4Database(t *testing.T) {
 		t.Errorf("ReplaceSites after the upgrade: %v", err)
 	}
 }
+
+func TestAnUpgradeFromTheSchemaWithoutPasswordsKeepsTheSites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "caddy-view.db")
+	ctx := context.Background()
+	first := open(t, path)
+	site := store.Site{ID: "a", Hostname: "a.example.com", Kind: store.SiteProxy, Upstreams: []string{"10.0.0.1"}, TLS: store.TLSAutomatic, Enabled: true, CreatedAt: base, UpdatedAt: base}
+	if err := first.ReplaceSites(ctx, []store.Site{site}); err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+
+	// Turn the database back into what the previous release left: a sites table without the password columns.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"basic_auth_user", "basic_auth_hash"} {
+		var has int
+		if err := raw.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('sites') WHERE name = ?", column).Scan(&has); err != nil {
+			t.Fatal(err)
+		}
+		if has > 0 {
+			if _, err := raw.ExecContext(ctx, "ALTER TABLE sites DROP COLUMN "+column); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := raw.ExecContext(ctx, "PRAGMA user_version = 5"); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	s := open(t, path)
+	if v, err := s.SchemaVersion(ctx); err != nil || v != store.LatestSchemaVersion || v < 6 {
+		t.Fatalf("SchemaVersion = %d, %v, want the latest, which is at least 6", v, err)
+	}
+	got, err := s.Sites(ctx)
+	if err != nil || len(got) != 1 || got[0].Hostname != "a.example.com" || got[0].BasicAuthUser != "" || got[0].BasicAuthHash != "" {
+		t.Fatalf("Sites after the upgrade = %+v, %v, want the site, without a password", got, err)
+	}
+	protected := site
+	protected.BasicAuthUser, protected.BasicAuthHash = "bob", "$2a$04$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+	if err := s.ReplaceSites(ctx, []store.Site{protected}); err != nil {
+		t.Errorf("ReplaceSites with a password after the upgrade: %v", err)
+	}
+}

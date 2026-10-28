@@ -473,6 +473,91 @@ with a real access log, light, dark and phone width.
   the table and the name of each bar still have the date.
 - The bundle is 415 KB (136 KB gzip).
 
+### Slice 4g in detail
+
+A proxy site may ask for a username and a password before it answers. One user per site, as decided; `basic_auth` is a
+directive of the site block, so it is written into the managed file with the others. The password is hashed here, with
+bcrypt, in the process (`golang.org/x/crypto/bcrypt`: Caddy wants a bcrypt hash, and the alternative is running
+`caddy hash-password`, which needs the Caddy binary where caddy-view runs). Pinned at v0.58.0, BSD-3-Clause.
+
+**What is stored, and what never is.**
+- `store.Site` gets `BasicAuthUser` and `BasicAuthHash` (migration 6: two columns with an empty default, so every site
+  that exists stays as it is). Both are set or neither is; the store refuses half of a password. A revision's snapshot
+  holds them too, as it holds the rest of the row, so a rollback brings the password back: the `sites` table, the
+  snapshots of `config_revisions` and the managed file are, from now on, as confidential as a password file.
+- The password in clear exists in the request and in `bcrypt.GenerateFromPassword`, and nowhere else: not in a row, not in
+  a revision, not in a log line, not in an error message, not in an answer. Tests check the log, the answers and the
+  errors for the password and for the hash.
+- The API never says the hash. A site answers `basicAuth: {"user": "bob"}`, or `null`; that is all the wizard knows, and
+  it is enough to say "a password is set". A request cannot send a hash either: `basicAuthHash` and `basicAuth.hash` are
+  unknown fields, a 400.
+- A preview never has a real hash: when the site has a password the text it generates carries `sites.PlaceholderHash`,
+  a hash of the right shape that is nobody's. A preview is asked at every pause in typing, and a hash costs about 60 ms
+  of CPU; and a preview of a site that keeps its password must not hand the stored hash to the browser.
+
+**The request.** `siteInput` takes `basicAuth: {"user", "password"}`. The rules are `sites.SetBasicAuth`, one function used
+by create, update and preview:
+- no `basicAuth`, `null`, or an empty user: no password (an update that leaves it out takes the password away);
+- a user and a password: a new hash. The user is 1 to 64 of letters, digits and `. _ - @`; the password is 8 to 72 bytes
+  (bcrypt reads no more than 72 and newer versions refuse more, so the limit is said rather than silently applied);
+- a user and an empty password: the hash of the site's previous version is kept, for the same site only; a site that has
+  none needs a password (`basicAuthPassword`). This is what lets the wizard save, and the Enable/Disable buttons work,
+  without ever knowing the password;
+- a password and no user: `basicAuthUser`.
+The cost is `Options.BasicAuthCost` (bcrypt's default, 10, unless a test asks for the minimum). A refusal is the usual
+`invalid-site` with the field (`basicAuthUser` or `basicAuthPassword`), and nothing is applied.
+
+**Validation** (`sites.Validate`, which also guards what is already stored, since it is what decides what reaches the
+file): the user as above; the hash must have the shape bcrypt makes (`$2a$`, `$2b$` or `$2y$`, a cost from 04 to 31, 53
+characters of the bcrypt alphabet) and nothing else, so that nothing that could end a block or start a directive reaches
+the Caddyfile; and only a proxy has a password.
+
+**The generated text**: after the access log, `tls` and before the handler,
+
+```caddyfile
+app.example.com {
+	basic_auth {
+		bob $2a$10$...
+	}
+	reverse_proxy 10.0.0.5:8080
+}
+```
+
+A disabled site is left out whole, password included. The lines of the block still belong to its site, so Caddy's errors
+point at it.
+
+**The wizard** has a switch, "Require a password", for a proxy (a redirect has none). On, it asks for a username and a
+password (`type=password`, `autocomplete=new-password`), and says that TLS being off means the password travels
+unencrypted. Editing a site that has one opens with the switch on and the username, never the password, and says "A password
+is set. Leave the password empty to keep it."; a typed password replaces it, and the switch off takes it away. What was
+typed stays in the field when the server refuses the site. The table marks protected sites and names the user.
+
+**Tests.** `SetBasicAuth` and `Validate` as tables; golden text; the store contract and the upgrade from schema 5; the routes
+(what is answered, kept, replaced, removed, refused, logged); and against a real Caddy: a protected site answers 401 with a
+Basic challenge, 200 with the right credentials and 401 with a wrong password or user, two sites keep their own passwords, a
+password taken away stops being asked for, a rollback brings it back, and the managed file holds the hash and not the
+password. Then the browser.
+
+**Done, and what the real Caddy and the browser showed.**
+- Built as written. Against a real Caddy 2.11.7 a protected site answers 401 with `WWW-Authenticate: Basic` without credentials, 200 with
+  the right ones and 401 with a wrong password or a wrong user; two sites keep their own passwords; a password taken away is no
+  longer asked for; and a rollback brings it back, rows included. The managed file holds the hash and not the password.
+- The database of the previous release (schema 5, with sites) opened under the new binary: migration 6 ran, the sites kept
+  `basicAuth: null`, and a password was then set on one of them through the wizard. Neither the log, the managed file nor the
+  database file contains the password that was typed.
+- The wizard of a site that has a password opens with the switch on and the user; a bad username and a short password each
+  show their message under their own field, from the server's validation, and the preview carries the placeholder hash.
+- A bug of 4e showed up with the longer text this slice put in the wizard: a long line of the generated text (the access log
+  path in its snippet) widened the grid track of the form, and with it the page, which scrolled sideways. The form's column is
+  now `minmax(0, 1fr)` and the text scrolls inside its box.
+- Not looked at on a phone: the browser pane stopped drawing during this slice, so the last checks were made on the page's
+  elements and on the real Caddy, not on screenshots. The new fields reuse the classes of the rest of the wizard.
+- `govulncheck` reports GO-2026-5932 in `golang.org/x/crypto@v0.58.0`, with no fixed version yet. It is in a package caddy-view does
+  not import (only `bcrypt` is used) and the tool says the code does not call it, so the gate stays green. To be looked at again
+  whenever x/crypto has a release.
+- A hash in the managed file is as sensitive as any `basic_auth` in a Caddyfile: the file keeps the mode it has, and keeping
+  it readable only by the user of Caddy is up to whoever installs it (it is in the README's security notes).
+
 ## Slices
 
 The backend of managed sites comes first, because it is the part with real risk and it is checked against a real Caddy;
@@ -486,7 +571,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 | 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback (done) | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |
 | 4e | Sites tab and the wizard, including "add the import" (done) | Creating a reverse proxy from the browser works against a real Caddy |
 | 4f | Metrics tab and Logs history search (done) | Charts match `/api/traffic`; a search finds a stored request |
-| 4g | Basic auth: bcrypt in-process, the field in the wizard, the generated `basic_auth` block | A real Caddy asks for the password of a site and accepts the right one; the password is stored nowhere |
+| 4g | Basic auth: bcrypt in-process, the field in the wizard, the generated `basic_auth` block (done) | A real Caddy asks for the password of a site and accepts the right one; the password is stored nowhere |
 | 4h | Config tab; `--backup-mode sites-only` if question 3 is answered yes | The tab shows what `/api/system` says |
 
 

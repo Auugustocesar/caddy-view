@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/Auugustocesar/caddy-view/internal/configmgr"
 	"github.com/Auugustocesar/caddy-view/internal/sites"
 	"github.com/Auugustocesar/caddy-view/internal/store"
@@ -46,9 +48,15 @@ type managedSiteJSON struct {
 	RedirectTarget string   `json:"redirectTarget"`
 	RedirectCode   int      `json:"redirectCode"`
 	AccessLog      bool     `json:"accessLog"`
-	Enabled        bool     `json:"enabled"`
-	CreatedAt      string   `json:"createdAt"`
-	UpdatedAt      string   `json:"updatedAt"`
+	// BasicAuth says that the site asks for a password, and for whom. It never has the hash, nor anything of the password.
+	BasicAuth *basicAuthJSON `json:"basicAuth"`
+	Enabled   bool           `json:"enabled"`
+	CreatedAt string         `json:"createdAt"`
+	UpdatedAt string         `json:"updatedAt"`
+}
+
+type basicAuthJSON struct {
+	User string `json:"user"`
 }
 
 func managedSiteAnswer(s store.Site) managedSiteJSON {
@@ -56,8 +64,13 @@ func managedSiteAnswer(s store.Site) managedSiteJSON {
 	if ups == nil {
 		ups = []string{}
 	}
+	var auth *basicAuthJSON
+	if s.BasicAuthUser != "" {
+		auth = &basicAuthJSON{User: s.BasicAuthUser}
+	}
 	return managedSiteJSON{
-		ID: s.ID, Hostname: s.Hostname, Kind: string(s.Kind), Upstreams: ups, SkipTLSVerify: s.SkipTLSVerify, TLS: string(s.TLS),
+		BasicAuth: auth,
+		ID:        s.ID, Hostname: s.Hostname, Kind: string(s.Kind), Upstreams: ups, SkipTLSVerify: s.SkipTLSVerify, TLS: string(s.TLS),
 		RedirectTarget: s.RedirectTarget, RedirectCode: s.RedirectCode, AccessLog: s.AccessLog, Enabled: s.Enabled,
 		CreatedAt: utc(s.CreatedAt), UpdatedAt: utc(s.UpdatedAt),
 	}
@@ -93,6 +106,40 @@ type siteInput struct {
 	RedirectCode   int            `json:"redirectCode"`
 	AccessLog      bool           `json:"accessLog"`
 	Enabled        *bool          `json:"enabled"`
+	// BasicAuth is the username and the password, in clear. Absent or null, or without a user, is no password; with a user and
+	// no password the site keeps the password it has. The password lives here, in the request, and nowhere else.
+	BasicAuth *basicAuthInput `json:"basicAuth"`
+}
+
+type basicAuthInput struct {
+	User     string `json:"user"`
+	Password string `json:"password"`
+}
+
+// setBasicAuth sets the password of site from the request, by the rules of sites.SetBasicAuth. previous is the site as it
+// is now, when it exists, so that a password that is not sent is kept.
+func (in siteInput) setBasicAuth(site *store.Site, previous *store.Site, cost int) []sites.FieldError {
+	var user, password string
+	if in.BasicAuth != nil {
+		user, password = in.BasicAuth.User, in.BasicAuth.Password
+	}
+	return sites.SetBasicAuth(site, user, password, previous, cost)
+}
+
+// fieldProblems puts the problems of the fields of one site in the shape the answers have.
+func fieldProblems(id string, errs []sites.FieldError) []siteProblemJSON {
+	out := make([]siteProblemJSON, len(errs))
+	for i, e := range errs {
+		out[i] = siteProblemJSON{Site: id, Field: e.Field, Message: e.Message}
+	}
+	return out
+}
+
+// invalidSite answers a request whose password is not acceptable: nothing was applied.
+func (a *api) invalidSite(w http.ResponseWriter, id string, errs []sites.FieldError) {
+	writeJSON(w, http.StatusUnprocessableEntity, failureJSON{
+		Error: siteSaid.notApplied + "the site is not valid", Code: "invalid-site", Errors: fieldProblems(id, errs),
+	})
 }
 
 // previewInput is a site to preview, which may name the site it would replace.
@@ -199,6 +246,10 @@ func (a *api) sitesCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	added := in.site(sites.NewID())
+	if errs := in.setBasicAuth(&added, nil, a.opts.BasicAuthCost); errs != nil {
+		a.invalidSite(w, added.ID, errs)
+		return
+	}
 	rev, err := a.opts.Sites.ApplySites(r.Context(), append(current, added))
 	if err != nil {
 		a.changeFailedWith(w, r, rev, err, siteSaid)
@@ -225,6 +276,10 @@ func (a *api) sitesUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	updated := in.site(id)
 	updated.CreatedAt, updated.UpdatedAt = current[i].CreatedAt, current[i].UpdatedAt
+	if errs := in.setBasicAuth(&updated, &current[i], a.opts.BasicAuthCost); errs != nil {
+		a.invalidSite(w, id, errs)
+		return
+	}
 	desired := slices.Clone(current)
 	desired[i] = updated
 	rev, err := a.opts.Sites.ApplySites(r.Context(), desired)
@@ -266,10 +321,27 @@ func (a *api) sitesPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	desired := slices.Clone(current)
-	if i := slices.IndexFunc(current, func(s store.Site) bool { return in.ID != "" && s.ID == in.ID }); i >= 0 {
-		desired[i] = in.siteInput.site(in.ID)
+	i := slices.IndexFunc(current, func(s store.Site) bool { return in.ID != "" && s.ID == in.ID })
+	id := sites.NewID()
+	var previous *store.Site
+	if i >= 0 {
+		id, previous = in.ID, &current[i]
+	}
+	site := in.siteInput.site(id)
+	// A preview checks the password by the same rules but with the cheapest hash, and then puts a placeholder where the
+	// hash goes: a preview is asked at every pause in typing, and the hash of a site that keeps its password must not
+	// be given to the browser.
+	if errs := in.siteInput.setBasicAuth(&site, previous, bcrypt.MinCost); errs != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "errors": fieldProblems(id, errs)})
+		return
+	}
+	if site.BasicAuthUser != "" {
+		site.BasicAuthHash = sites.PlaceholderHash
+	}
+	if i >= 0 {
+		desired[i] = site
 	} else {
-		desired = append(desired, in.siteInput.site(sites.NewID()))
+		desired = append(desired, site)
 	}
 	text, err := a.opts.Sites.PreviewSites(r.Context(), desired)
 	var invalid *configmgr.InvalidSitesError

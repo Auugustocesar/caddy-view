@@ -17,7 +17,7 @@ import (
 // FieldError is one problem with one field of a site, in words for the user.
 type FieldError struct {
 	// Field is the JSON name of the field: hostname, kind, upstreams, skipTlsVerify, tls, redirectTarget,
-	// redirectCode or accessLog.
+	// redirectCode, accessLog, basicAuthUser or basicAuthPassword.
 	Field   string
 	Message string
 }
@@ -107,6 +107,8 @@ func Validate(s store.Site, others []store.Site, opts Options) []FieldError {
 	default:
 		p.add("tls", "Choose how the certificate is obtained: automatic, internal or off.")
 	}
+
+	validateBasicAuth(&p, n)
 
 	if n.AccessLog && opts.AccessLog == "" {
 		p.add("accessLog", "No access log file is known: Caddy has no JSON file log configured, and none was given with --access-log.")
@@ -324,6 +326,9 @@ func siteBlock(s store.Site, opts Options) []string {
 	}
 	if s.TLS == store.TLSInternal {
 		lines = append(lines, "\ttls internal")
+	}
+	if s.BasicAuthUser != "" {
+		lines = append(lines, "\tbasic_auth {", "\t\t"+s.BasicAuthUser+" "+s.BasicAuthHash, "\t}")
 	}
 	switch {
 	case s.Kind == store.SiteRedirect:

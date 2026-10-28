@@ -94,6 +94,7 @@ describe('SiteWizard for a new site', () => {
       redirectCode: 0,
       accessLog: false,
       enabled: true,
+      basicAuth: null,
     })
     expect(button('Add site').disabled).toBe(false)
   })
@@ -340,5 +341,167 @@ describe('SiteWizard changing a site', () => {
     expect(server.updates()[0].body).toMatchObject({ hostname: 'renamed.example.com', enabled: false })
     expect(server.updates()[0].body.id).toBeUndefined()
     expect(server.creates()).toHaveLength(0)
+  })
+})
+
+describe('SiteWizard password protection', () => {
+  const protectedSite = { ...existing, basicAuth: { user: 'bob' } }
+  const lastBody = (server) => server.previews().at(-1)?.body
+
+  it('has a switch for it, off for a new site, with no username or password to fill in', () => {
+    open()
+    expect(screen.getByLabelText('Require a password').checked).toBe(false)
+    expect(screen.queryByLabelText('Username')).toBeNull()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+  })
+
+  it('asks for a username and a password when the switch is on', async () => {
+    open()
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    expect(screen.getByLabelText('Username')).toBeTruthy()
+    const password = screen.getByLabelText('Password')
+    expect(password.type).toBe('password')
+    expect(password.getAttribute('autocomplete')).toBe('new-password')
+  })
+
+  it('sends the username and the password it is given', async () => {
+    const { server } = open()
+    await fill('Hostname', 'app.example.com')
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    await fill('Username', 'bob')
+    await fill('Password', 'correct horse')
+    await waitFor(() => expect(lastBody(server).basicAuth).toEqual({ user: 'bob', password: 'correct horse' }))
+  })
+
+  it('sends none when the switch is off, whatever was typed before', async () => {
+    const { server } = open()
+    await fill('Hostname', 'app.example.com')
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    await fill('Username', 'bob')
+    await fill('Password', 'correct horse')
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    await waitFor(() => expect(lastBody(server).basicAuth).toBeNull())
+    expect(screen.queryByLabelText('Password')).toBeNull()
+  })
+
+  it('does not offer it for a redirect, and sends none', async () => {
+    const { server } = open()
+    await fill('Hostname', 'old.example.com')
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    await fill('Username', 'bob')
+    await fill('Password', 'correct horse')
+    await fireEvent.click(screen.getByLabelText('Redirect'))
+    expect(screen.queryByLabelText('Require a password')).toBeNull()
+    await waitFor(() => expect(lastBody(server).kind).toBe('redirect'))
+    expect(lastBody(server).basicAuth).toBeNull()
+  })
+
+  it('warns that the password travels unencrypted when TLS is off', async () => {
+    open()
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    expect(screen.queryByText(/unencrypted/i)).toBeNull()
+    await fireEvent.change(screen.getByLabelText('TLS'), { target: { value: 'off' } })
+    expect(screen.getByText(/unencrypted/i)).toBeTruthy()
+    await fireEvent.change(screen.getByLabelText('TLS'), { target: { value: 'internal' } })
+    expect(screen.queryByText(/unencrypted/i)).toBeNull()
+  })
+
+  it('does not warn about it when there is no password', async () => {
+    open()
+    await fireEvent.change(screen.getByLabelText('TLS'), { target: { value: 'off' } })
+    expect(screen.queryByText(/unencrypted/i)).toBeNull()
+  })
+
+  it('shows the errors of the username and of the password under their fields', async () => {
+    open(
+      {},
+      {
+        'POST /api/managed-sites/preview': () =>
+          json({
+            valid: false,
+            errors: [
+              { site: 'x', field: 'basicAuthUser', message: 'Use letters, digits and . _ - @ in the username.' },
+              { site: 'x', field: 'basicAuthPassword', message: 'The password needs at least 8 characters.' },
+            ],
+          }),
+      },
+    )
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    await fill('Username', 'bob smith')
+    await fill('Password', 'short')
+    expect(await screen.findByText('Use letters, digits and . _ - @ in the username.')).toBeTruthy()
+    expect(screen.getByText('The password needs at least 8 characters.')).toBeTruthy()
+    expect(screen.getByLabelText('Username').getAttribute('aria-invalid')).toBe('true')
+    expect(screen.getByLabelText('Password').getAttribute('aria-invalid')).toBe('true')
+    expect(button('Add site').disabled).toBe(true)
+  })
+
+  it('keeps what was typed in the password field when the server refuses the site', async () => {
+    open({}, { 'POST /api/managed-sites': () => json({ error: 'Nothing was applied: boom', code: 'apply-failed' }, 502) })
+    await fill('Hostname', 'app.example.com')
+    await fill('Upstreams', '10.0.0.5:8080')
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    await fill('Username', 'bob')
+    await fill('Password', 'correct horse')
+    await waitFor(() => expect(button('Add site').disabled).toBe(false))
+    await fireEvent.click(button('Add site'))
+    await screen.findByRole('alert')
+    expect(screen.getByLabelText('Password').value).toBe('correct horse')
+  })
+
+  it('posts the password with the site', async () => {
+    const { server } = open()
+    await fill('Hostname', 'app.example.com')
+    await fill('Upstreams', '10.0.0.5:8080')
+    await fireEvent.click(screen.getByLabelText('Require a password'))
+    await fill('Username', 'bob')
+    await fill('Password', 'correct horse')
+    await waitFor(() => expect(button('Add site').disabled).toBe(false))
+    await fireEvent.click(button('Add site'))
+    await waitFor(() => expect(server.creates()).toHaveLength(1))
+    expect(server.creates()[0].body.basicAuth).toEqual({ user: 'bob', password: 'correct horse' })
+  })
+
+  describe('of a site that has a password', () => {
+    it('opens with the switch on and the username, and never with the password', () => {
+      open({ site: protectedSite })
+      expect(screen.getByLabelText('Require a password').checked).toBe(true)
+      expect(screen.getByLabelText('Username').value).toBe('bob')
+      expect(screen.getByLabelText('Password').value).toBe('')
+    })
+
+    it('says a password is set, and that leaving the field empty keeps it', () => {
+      open({ site: protectedSite })
+      expect(screen.getByText(/a password is set/i)).toBeTruthy()
+      expect(screen.getByText(/leave the password empty to keep it/i)).toBeTruthy()
+    })
+
+    it('keeps the password when it is saved without a new one', async () => {
+      const { server } = open({ site: protectedSite })
+      await waitFor(() => expect(button('Save changes').disabled).toBe(false))
+      expect(lastBody(server).basicAuth).toEqual({ user: 'bob', password: '' })
+      await fireEvent.click(button('Save changes'))
+      await waitFor(() => expect(server.updates()).toHaveLength(1))
+      expect(server.updates()[0].body.basicAuth).toEqual({ user: 'bob', password: '' })
+    })
+
+    it('sends a new password when one is typed', async () => {
+      const { server } = open({ site: protectedSite })
+      await fill('Password', 'a new password')
+      await waitFor(() => expect(lastBody(server).basicAuth).toEqual({ user: 'bob', password: 'a new password' }))
+    })
+
+    it('takes the password away when the switch is turned off', async () => {
+      const { server } = open({ site: protectedSite })
+      await fireEvent.click(screen.getByLabelText('Require a password'))
+      await waitFor(() => expect(lastBody(server).basicAuth).toBeNull())
+      expect(screen.queryByText(/a password is set/i)).toBeNull()
+    })
+
+    it('does not say a password is set for a site that has none', async () => {
+      open({ site: existing })
+      await fireEvent.click(screen.getByLabelText('Require a password'))
+      expect(screen.queryByText(/a password is set/i)).toBeNull()
+    })
   })
 })

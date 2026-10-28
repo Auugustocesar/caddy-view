@@ -102,6 +102,31 @@ describe('SitesView listing', () => {
     expect(b.textContent).toMatch(/disabled/i)
   })
 
+  it('marks the sites that ask for a password, and only those', async () => {
+    const protectedSite = { ...siteA, basicAuth: { user: 'bob' } }
+    await open({ 'GET /api/managed-sites': () => json(listing({ sites: [protectedSite, { ...siteB, basicAuth: null }] })) })
+    await within(managed()).findByText('a.example.com')
+    expect(rowOf('a.example.com').textContent).toMatch(/password/i)
+    expect(rowOf('b.example.com').textContent).not.toMatch(/password/i)
+  })
+
+  it('names the user of a protected site, but never shows a password', async () => {
+    const protectedSite = { ...siteA, basicAuth: { user: 'bob' } }
+    await open({ 'GET /api/managed-sites': () => json(listing({ sites: [protectedSite] })) })
+    await within(managed()).findByText('a.example.com')
+    expect(rowOf('a.example.com').textContent).toContain('bob')
+    expect(document.body.innerHTML).not.toMatch(/\$2[aby]\$/)
+  })
+
+  it('opens the wizard of a protected site with the password switch on', async () => {
+    const protectedSite = { ...siteA, basicAuth: { user: 'bob' } }
+    await open({ 'GET /api/managed-sites': () => json(listing({ sites: [protectedSite] })) })
+    await within(managed()).findByText('a.example.com')
+    await fireEvent.click(button('Edit a.example.com'))
+    expect(screen.getByLabelText('Require a password').checked).toBe(true)
+    expect(screen.getByLabelText('Username').value).toBe('bob')
+  })
+
   it('says there are no managed sites yet', async () => {
     await open({ 'GET /api/managed-sites': () => json(listing({ sites: [] })) })
     expect(await screen.findByText(/no managed sites yet/i)).toBeTruthy()
@@ -314,8 +339,18 @@ describe('SitesView enabling, disabling and deleting', () => {
       redirectCode: 0,
       accessLog: false,
       enabled: false,
+      basicAuth: null,
     })
     await waitFor(() => expect(status()).toMatch(/disabled a\.example\.com/i))
+  })
+
+  it('keeps the password of a site when it is disabled and enabled again', async () => {
+    const protectedSite = { ...siteA, basicAuth: { user: 'bob' } }
+    const { server } = await open({ 'GET /api/managed-sites': () => json(listing({ sites: [protectedSite] })) })
+    await within(managed()).findByText('a.example.com')
+    await fireEvent.click(button('Disable a.example.com'))
+    await waitFor(() => expect(server.to('PUT', `/api/managed-sites/${A}`)).toHaveLength(1))
+    expect(server.to('PUT', `/api/managed-sites/${A}`)[0].body.basicAuth).toEqual({ user: 'bob', password: '' })
   })
 
   it('enables a disabled site, keeping its redirect', async () => {

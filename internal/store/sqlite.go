@@ -21,7 +21,7 @@ import (
 )
 
 // LatestSchemaVersion is the number of the last migration this version of caddy-view knows.
-const LatestSchemaVersion = 5
+const LatestSchemaVersion = 6
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const siteColumns = "id, hostname, kind, upstreams, skip_tls_verify, tls, redirect_target, redirect_code, access_log, enabled, created_at, updated_at"
+const siteColumns = "id, hostname, kind, upstreams, skip_tls_verify, tls, redirect_target, redirect_code, access_log, basic_auth_user, basic_auth_hash, enabled, created_at, updated_at"
 
 // Sites returns the managed sites, ordered by hostname.
 func (s *SQLite) Sites(ctx context.Context) ([]Site, error) {
@@ -32,7 +32,7 @@ func (s *SQLite) Sites(ctx context.Context) ([]Site, error) {
 			createdAt, updatedAt     int64
 		)
 		err := rows.Scan(&site.ID, &site.Hostname, &kind, &upstreams, &skip, &tlsMode, &site.RedirectTarget, &site.RedirectCode,
-			&accessLog, &enabled, &createdAt, &updatedAt)
+			&accessLog, &site.BasicAuthUser, &site.BasicAuthHash, &enabled, &createdAt, &updatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("list sites: %w", err)
 		}
@@ -85,8 +85,8 @@ func insertSite(ctx context.Context, tx *sql.Tx, s Site) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+	_, err = tx.ExecContext(ctx, "INSERT INTO sites ("+siteColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		s.ID, s.Hostname, string(s.Kind), string(upstreams), s.SkipTLSVerify, string(s.TLS), s.RedirectTarget, s.RedirectCode,
-		s.AccessLog, s.Enabled, s.CreatedAt.UnixMilli(), s.UpdatedAt.UnixMilli())
+		s.AccessLog, s.BasicAuthUser, s.BasicAuthHash, s.Enabled, s.CreatedAt.UnixMilli(), s.UpdatedAt.UnixMilli())
 	return err
 }

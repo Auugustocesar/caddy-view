@@ -21,6 +21,9 @@ type SiteStore interface {
 	Close() error
 }
 
+// testHash has the shape of a bcrypt hash; the store does not look at it beyond keeping it.
+const testHash = "$2a$04$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+
 func proxySite(id, host string, upstreams ...string) store.Site {
 	return store.Site{
 		ID: id, Hostname: host, Kind: store.SiteProxy, Upstreams: upstreams, TLS: store.TLSAutomatic, Enabled: true,
@@ -82,6 +85,26 @@ func RunSites(t *testing.T, newStore func(t *testing.T) SiteStore) {
 		}
 	})
 
+	t.Run("the user and the hash of a password read back as stored, and a site without one has neither", func(t *testing.T) {
+		s := fresh(t)
+		protected := proxySite("a", "a.example.com", "10.0.0.1")
+		protected.BasicAuthUser, protected.BasicAuthHash = "bob", testHash
+		plain := proxySite("b", "b.example.com", "10.0.0.2")
+		if err := s.ReplaceSites(ctx, []store.Site{plain, protected}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Sites(ctx)
+		if err != nil || len(got) != 2 {
+			t.Fatalf("Sites = %v, %v", got, err)
+		}
+		if got[0].BasicAuthUser != "bob" || got[0].BasicAuthHash != testHash {
+			t.Errorf("the protected site reads back with %q and %q, want bob and its hash", got[0].BasicAuthUser, got[0].BasicAuthHash)
+		}
+		if got[1].BasicAuthUser != "" || got[1].BasicAuthHash != "" {
+			t.Errorf("the plain site reads back with %q and %q, want neither", got[1].BasicAuthUser, got[1].BasicAuthHash)
+		}
+	})
+
 	t.Run("replacing keeps only the new set", func(t *testing.T) {
 		s := fresh(t)
 		if err := s.ReplaceSites(ctx, []store.Site{proxySite("a", "a.example.com", "10.0.0.1")}); err != nil {
@@ -116,6 +139,12 @@ func RunSites(t *testing.T, newStore func(t *testing.T) SiteStore) {
 			"an unknown kind":               {func() store.Site { s := proxySite("a", "a.example.com", "10.0.0.1"); s.Kind = "magic"; return s }()},
 			"an unknown tls mode":           {func() store.Site { s := proxySite("a", "a.example.com", "10.0.0.1"); s.TLS = "maybe"; return s }()},
 			"no kind":                       {func() store.Site { s := proxySite("a", "a.example.com", "10.0.0.1"); s.Kind = ""; return s }()},
+			"a user without a hash":         {func() store.Site { s := proxySite("a", "a.example.com", "10.0.0.1"); s.BasicAuthUser = "bob"; return s }()},
+			"a hash without a user": {func() store.Site {
+				s := proxySite("a", "a.example.com", "10.0.0.1")
+				s.BasicAuthHash = testHash
+				return s
+			}()},
 		}
 		for name, set := range bad {
 			if err := s.ReplaceSites(ctx, set); !errors.Is(err, store.ErrInvalidSite) {
@@ -155,7 +184,9 @@ func RunSites(t *testing.T, newStore func(t *testing.T) SiteStore) {
 
 	t.Run("a revision keeps its managed state", func(t *testing.T) {
 		s := fresh(t)
-		snapshot := []store.Site{proxySite("a", "a.example.com", "10.0.0.1"), redirectSite("b", "b.example.com", "https://x.example.com")}
+		protected := proxySite("a", "a.example.com", "10.0.0.1")
+		protected.BasicAuthUser, protected.BasicAuthHash = "bob", testHash // a revision must be able to put the password back
+		snapshot := []store.Site{protected, redirectSite("b", "b.example.com", "https://x.example.com")}
 		managed := &store.RevisionSites{Content: "# managed\n", SHA256: strings.Repeat("cd", 32), Snapshot: snapshot}
 		r := revision("main", base)
 		r.Sites = managed
@@ -263,6 +294,7 @@ func sameSite(a, b store.Site) bool {
 	return a.ID == b.ID && a.Hostname == b.Hostname && a.Kind == b.Kind && reflect.DeepEqual(a.Upstreams, b.Upstreams) &&
 		a.SkipTLSVerify == b.SkipTLSVerify && a.TLS == b.TLS && a.RedirectTarget == b.RedirectTarget &&
 		a.RedirectCode == b.RedirectCode && a.AccessLog == b.AccessLog && a.Enabled == b.Enabled &&
+		a.BasicAuthUser == b.BasicAuthUser && a.BasicAuthHash == b.BasicAuthHash &&
 		a.CreatedAt.Equal(b.CreatedAt) && a.UpdatedAt.Equal(b.UpdatedAt)
 }
 

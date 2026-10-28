@@ -53,6 +53,8 @@ type Options struct {
 	CaddyfilePath string
 	// Now gives the current time for the history routes. Zero means time.Now.
 	Now func() time.Time
+	// BasicAuthCost is the bcrypt cost of the password hashes of managed sites. Zero means bcrypt.DefaultCost.
+	BasicAuthCost int
 	// MaxStreams caps the concurrent log streams. Zero means 8.
 	MaxStreams int
 	// HeartbeatInterval is how often an idle log stream sends a ping comment. Zero means 15 seconds.

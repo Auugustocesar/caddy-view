@@ -5,11 +5,13 @@
  * @typedef {{
  *   hostname: string, kind: 'proxy'|'redirect', upstreams: string, skipTlsVerify: boolean, tls: 'automatic'|'internal'|'off',
  *   redirectTarget: string, redirectCode: number, accessLog: boolean, enabled: boolean,
+ *   basicAuth: boolean, basicAuthUser: string, basicAuthPassword: string, hasPassword: boolean,
  * }} SiteForm
  *
  * @typedef {{
  *   id?: string, hostname: string, kind: string, upstreams: string[], skipTlsVerify: boolean, tls: string,
  *   redirectTarget: string, redirectCode: number, accessLog: boolean, enabled: boolean,
+ *   basicAuth?: {user: string} | null,
  * }} Site
  */
 
@@ -28,6 +30,10 @@ export function emptyForm() {
     redirectCode: 301,
     accessLog: false,
     enabled: true,
+    basicAuth: false,
+    basicAuthUser: '',
+    basicAuthPassword: '',
+    hasPassword: false,
   }
 }
 
@@ -43,6 +49,11 @@ export function formFromSite(site) {
     redirectCode: site.redirectCode || 301,
     accessLog: Boolean(site.accessLog),
     enabled: Boolean(site.enabled),
+    // The API says that a password is set and for whom; never the password. It is typed again to change it.
+    basicAuth: isProtected(site),
+    basicAuthUser: site.basicAuth?.user ?? '',
+    basicAuthPassword: '',
+    hasPassword: isProtected(site),
   }
 }
 
@@ -64,6 +75,8 @@ export function payloadFromForm(form) {
     redirectCode: proxy ? 0 : Number(form.redirectCode),
     accessLog: form.accessLog,
     enabled: form.enabled,
+    // A password is only for a proxy. Without a new one the server keeps the one the site has.
+    basicAuth: proxy && form.basicAuth ? { user: form.basicAuthUser.trim(), password: form.basicAuthPassword } : null,
   }
 }
 
@@ -79,4 +92,9 @@ export function errorsByField(errors) {
 export function describeSite(site) {
   if (site.kind === 'redirect') return `Redirect to ${site.redirectTarget} (${site.redirectCode})`
   return site.upstreams?.length ? `Proxy to ${site.upstreams.join(', ')}` : 'Proxy'
+}
+
+/** Whether a site asks for a password. The API says only that, never the hash. @param {{basicAuth?: {user: string} | null}} site @returns {boolean} */
+export function isProtected(site) {
+  return Boolean(site.basicAuth)
 }

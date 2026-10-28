@@ -139,6 +139,51 @@
       <p class="hint">For an <code>https://</code> upstream with a certificate nobody signed, such as a self-signed one.</p>
       {#if shown.skipTlsVerify}<p class="error">{shown.skipTlsVerify}</p>{/if}
     </div>
+    <div class="field">
+      <label class="choice"><input type="checkbox" bind:checked={form.basicAuth} onchange={() => touch('basicAuth')} /> Require a password</label>
+      <p class="hint">Visitors must give a username and a password before the site answers.</p>
+      {#if form.basicAuth}
+        <div class="auth">
+          <div class="field">
+            <label for={ids('auth-user')}>Username</label>
+            <input
+              id={ids('auth-user')}
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              bind:value={form.basicAuthUser}
+              oninput={() => touch('basicAuthUser')}
+              aria-invalid={shown.basicAuthUser ? 'true' : undefined}
+              aria-describedby={shown.basicAuthUser ? ids('auth-user-error') : undefined}
+            />
+            {#if shown.basicAuthUser}<p class="error" id={ids('auth-user-error')}>{shown.basicAuthUser}</p>{/if}
+          </div>
+          <div class="field">
+            <label for={ids('auth-password')}>Password</label>
+            <input
+              id={ids('auth-password')}
+              type="password"
+              autocomplete="new-password"
+              bind:value={form.basicAuthPassword}
+              oninput={() => touch('basicAuthPassword')}
+              aria-invalid={shown.basicAuthPassword ? 'true' : undefined}
+              aria-describedby={shown.basicAuthPassword ? ids('auth-password-error') : undefined}
+            />
+            {#if shown.basicAuthPassword}
+              <p class="error" id={ids('auth-password-error')}>{shown.basicAuthPassword}</p>
+            {:else if form.hasPassword}
+              <p class="hint">A password is set. Leave the password empty to keep it.</p>
+            {:else}
+              <p class="hint">At least 8 characters. caddy-view keeps only a hash of it.</p>
+            {/if}
+          </div>
+          {#if form.tls === 'off'}
+            <p class="warn">TLS is off, so the password would travel unencrypted. Choose automatic or internal TLS.</p>
+          {/if}
+        </div>
+      {/if}
+      {#if shown.basicAuth}<p class="error">{shown.basicAuth}</p>{/if}
+    </div>
   {:else}
     <div class="field">
       <label for={ids('target')}>Redirect to</label>
@@ -210,6 +255,8 @@
 <style>
   .wizard {
     display: grid;
+    /* A track as wide as its widest child would let a long line of the generated text widen the whole page. */
+    grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
     padding: 1.25rem 1.5rem;
     border-radius: var(--radius-lg);
@@ -278,6 +325,19 @@
   .error {
     margin: 0;
     color: var(--bad);
+    font-size: 0.85rem;
+  }
+  .auth {
+    display: grid;
+    gap: 0.75rem;
+    margin-top: 0.4rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+  }
+  .warn {
+    margin: 0;
+    color: var(--warn);
     font-size: 0.85rem;
   }
   .generated pre {

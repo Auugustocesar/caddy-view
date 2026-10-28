@@ -176,6 +176,12 @@ for a proxy, one or more `upstreams` (`host`, `host:port` or `https://host:port`
 authority, or `off` for plain HTTP), `accessLog` (write the site's requests to the access log caddy-view reads, when
 there is one), and `enabled` (a disabled site stays in the list but is left out of the file).
 
+A proxy may ask for a username and a password with `basicAuth`: `{"user": "bob", "password": "…"}` (a username of 1 to 64
+letters, digits and `. _ - @`, a password of 8 to 72 bytes). caddy-view makes a bcrypt hash of the password and writes a
+`basic_auth` block with the hash; the password itself is not stored, logged or answered, and the API only says that a site has
+a password and for whom. Sending the user with an empty password keeps the password the site has; leaving `basicAuth` out
+takes it away. Use it with TLS: with `tls: off` the password crosses the network in clear.
+
 A change is applied as a whole or not at all. Caddy checks the managed file and the Caddyfile together, loads them,
 and caddy-view reads back what runs; if anything fails, the managed file is put back, the list of sites is unchanged,
 and the answer says that nothing was applied and which site is the problem. A hostname that your own Caddyfile already
@@ -201,6 +207,9 @@ sites is refused too.
   and is fine.
 - **Secrets are redacted.** Values of keys such as `password`, `token`, `secret`, `key`, `*_token`, `*_secret`
   and credential headers become `[redacted]` in `/api/config`. References like `{env.TOKEN}` or `{file./path}` stay visible.
+- **Password hashes are secrets too.** The bcrypt hash of a managed site's password is in the `sites` table, in the snapshots of
+  the revisions and in the managed file, so protect the data directory and the managed file as you would a password file. The
+  password itself is only ever in the request that sets it.
 - **Stored paths drop the query string** unless `--store-query`, since query strings often carry tokens.
 - **Logs** go to stderr as text: failures to read Caddy and rejected hosts as warnings, every request as a debug
   line.

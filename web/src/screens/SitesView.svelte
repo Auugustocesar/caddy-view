@@ -2,7 +2,7 @@
   import SiteWizard from '../components/SiteWizard.svelte'
   import { addImport, deleteSite, getManagedSites, getSites, updateSite } from '../lib/api.js'
   import { tidyCaddyError } from '../lib/caddy-error.js'
-  import { describeSite, formFromSite, payloadFromForm } from '../lib/site-form.js'
+  import { describeSite, formFromSite, isProtected, payloadFromForm } from '../lib/site-form.js'
 
   /** @type {{previewDelay?: number}} */
   let { previewDelay = 400 } = $props()
@@ -164,7 +164,10 @@
               {#each data.sites as site (site.id)}
                 <tr>
                   <td class="host" data-label="Hostname">{site.hostname}</td>
-                  <td data-label="What it does">{describeSite(site)}</td>
+                  <td data-label="What it does">
+                    <div>{describeSite(site)}</div>
+                    {#if isProtected(site)}<div class="protected">Password for {site.basicAuth.user}</div>{/if}
+                  </td>
                   <td data-label="TLS">{site.tls}</td>
                   <td data-label="State"><span class="badge" data-state={site.enabled ? 'enabled' : 'disabled'}>{site.enabled ? 'Enabled' : 'Disabled'}</span></td>
                   <td class="actions"><div class="buttons">
@@ -331,6 +334,10 @@
   }
   .host {
     font-weight: 600;
+  }
+  .protected {
+    color: var(--muted);
+    font-size: 0.8rem;
   }
   .buttons {
     display: flex;
