@@ -411,6 +411,68 @@ then the browser, with a real `serve` and Caddy, light, dark and phone width.
   `https://app.localhost`) exists. `/api/sites` does not say which address a site came from. Matching by the managed site's
   TLS mode would be a guess; the badge says what is known.
 
+### Slice 4f in detail
+
+**What the API lacks.** The Metrics tab wants the traffic *by host* (the reference has a hosts table, and a host filter makes
+the other charts useful), and `/api/traffic` only sums all hosts or takes one it is told. The rollups already keep a row
+per host, so there is one new read, and nothing is stored differently:
+
+- `store.QueryHosts(HostQuery{Resolution, From, To, Limit})` returns `[]HostTotals` (requests, bytes, requests per status
+  class, the sum and the maximum of the durations, the latency histogram), the busiest first and then by name. `Limit`
+  is 100 by default and at most 500. Both stores have it, and
+  `storetest.RunHosts` is its contract: totals over buckets and classes, minutes and hours agreeing, the range applying to
+  the bucket start as in `QueryTraffic`, the order, the limit and its cap, status outside 100 to 599 as
+  other, and the errors of a bad query, a cancelled context and a closed store. In SQLite the busiest hosts are chosen
+  in the query (a subquery that orders by the sum and limits), so a flood of made-up `Host` headers cannot make it read
+  every host.
+- `GET /api/hosts` takes `resolution` (`minute` by default, or `hour`), `from`, `to` (as `/api/traffic`, default the last
+  hour or the last day) and `limit`, and answers `{"hosts": [{host, requests, bytes, errors5xx, status, avgMs, p95Ms,
+  maxMs}]}`, never `null`. It exists with the history, like the other history routes.
+
+**The Metrics tab** (`screens/MetricsView.svelte`, owns its data). A period (1 hour by the minute; 24 hours, 7 days and
+30 days by the hour; none of them more than 3,000 buckets) and a host, tiles (requests, traffic, server errors with their
+count, average response time with the maximum), the requests chart, the share of each status class, and the hosts
+table. Clicking a host in the table filters by it and clicking it again clears the filter; the hosts table itself never
+shrinks to the host chosen, because it is where it is chosen from. The tiles are summed in the browser from the buckets
+(`lib/metrics.js`): the average is weighted by each bucket's requests, which is exact because `avgMs` times the requests
+is the sum of the durations, and the slowest request is the largest `maxMs`. A 95th percentile of a period cannot be
+made from the percentiles of its buckets, so the tab shows it only per host (where the store has the whole histogram) and
+not in a tile. Without a history (`/api/traffic` answers 404) it says traffic history is off. Only the answer to the
+period and host that are showing counts. A Refresh button reads everything again; there is no polling.
+
+**Over several days** a chart of hourly bars is labelled with the day where it starts (`28 Oct`), not with times of day
+that repeat; its table and the name of each bar carry the date and the time. `BarChart` gets a `labels` option for this
+(`time` by default), and the tab uses dates for the periods longer than a day. `StatusBar` shows the classes as a bar and a
+table with the same numbers. The bar's widths are set with the `style:` directive (the CSSOM), which the policy allows, and
+not with a `style` attribute, which it would block.
+
+**The log history** (`screens/LogHistory.svelte`, in the Logs tab behind a choice of Live or History, `Segmented`): the
+filters of `/api/logs` (text in the path, host, status class as a range of codes, period), fifty requests at a time, "Load
+more" with the `next` the API gives, and the filters kept while paging. A new filter starts again from the newest
+request, and a typing pause (300 ms) comes before a text search. The live stream is closed while History is showing and
+opened again when Live is chosen.
+
+**Tests.** Go: the host contract on both stores and the route (parameters, defaults, errors, the cause hidden). Web: the
+period and summing helpers, the API client, `Segmented` (a radio group with arrow keys), `StatusBar`, `HostsTable`, the
+date labels of `BarChart`, both screens, and the tabs and the Logs choice in `App`. Then the browser, against a real `serve`
+with a real access log, light, dark and phone width.
+
+**Done, and what the browser showed.**
+- Built as written, with two corrections to the tests. A request without a host cannot exist: `AppendLog` refuses an entry with no host, so
+  the contract case for the empty host was wrong and is gone (the table still shows an empty host as "(no host)", which
+  costs nothing). And an average over three requests is exact to a microsecond, not to a nanosecond: the route test now says so.
+- Against a real `serve` with ten days of access log (21 thousand requests, three hosts): the 24 hours and 7 days charts, the
+  weekend dip, the status bar and its table, the hosts table (the 5xx burst on one host stands out in red), the host filter
+  from the select and from the table, the log history with every filter (a 5xx on one path on one host gave the two requests
+  that were there), and "Load more" (50, then 100, with `before`). Light, dark and phone width.
+- On a phone the history table put the path, its most useful column, out of sight to the right. Below 40 rem each request is a
+  card of three lines: the code, the method and the path; the time and the host; how long it took, how big, and for whom.
+- A page that is exactly full (here, 50 requests of a filter that matched 50) offers "Load more" and then finds nothing:
+  that is the API's `next`, set when a page is full. Left as it is.
+- Left as it is: when two day starts are closer than a label (7 days over a narrow chart), the second one has no label;
+  the table and the name of each bar still have the date.
+- The bundle is 415 KB (136 KB gzip).
+
 ## Slices
 
 The backend of managed sites comes first, because it is the part with real risk and it is checked against a real Caddy;
@@ -423,7 +485,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 | 4c | Design system, app shell, Dashboard with tiles and the traffic chart (done) | Tests pass; looked at in light, dark and phone width |
 | 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback (done) | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |
 | 4e | Sites tab and the wizard, including "add the import" (done) | Creating a reverse proxy from the browser works against a real Caddy |
-| 4f | Metrics tab and Logs history search | Charts match `/api/traffic`; a search finds a stored request |
+| 4f | Metrics tab and Logs history search (done) | Charts match `/api/traffic`; a search finds a stored request |
 | 4g | Basic auth: bcrypt in-process, the field in the wizard, the generated `basic_auth` block | A real Caddy asks for the password of a site and accepts the right one; the password is stored nowhere |
 | 4h | Config tab; `--backup-mode sites-only` if question 3 is answered yes | The tab shows what `/api/system` says |
 

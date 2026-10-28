@@ -13,11 +13,12 @@ import (
 	"github.com/Auugustocesar/caddy-view/internal/store"
 )
 
-// History is what the history routes need from the store: the three read methods.
+// History is what the history routes need from the store: its read methods.
 type History interface {
 	QueryLogs(ctx context.Context, q store.LogQuery) ([]store.LogEntry, error)
 	QueryTraffic(ctx context.Context, q store.TrafficQuery) ([]store.TrafficBucket, error)
 	QueryMetrics(ctx context.Context, q store.MetricQuery) ([]store.MetricSample, error)
+	QueryHosts(ctx context.Context, q store.HostQuery) ([]store.HostTotals, error)
 }
 
 const (

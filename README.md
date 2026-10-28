@@ -78,6 +78,7 @@ Always available, read-only:
 | `GET /api/logs/stream` | Live access log as server-sent events. Optional `?backlog=N` (0 to 1000) first sends the last N lines. Returns 404 when no JSON file log is found, 429 beyond 8 open streams |
 | `GET /api/logs` | Stored log entries, newest first. Filters `host`, `minStatus`, `maxStatus`, `q` (text in the path), `from`, `to`; paged with `limit` and `before` |
 | `GET /api/traffic` | Requests, bytes, status classes and latency per minute or hour (`resolution`), with `from`, `to` and `host` |
+| `GET /api/hosts` | The same, totalled per host over a range (`resolution`, `from`, `to`), the busiest first; `limit` (100 by default, at most 500) |
 | `GET /api/summary` | Requests per second, 5xx rate, average and p95 latency, in flight and healthy upstreams over a `window` (`5m` to `7d`) |
 | `GET /api/system` | How caddy-view itself is doing: whether Caddy is reachable, the ingestion of the access log (file, offset, lines skipped, gaps, newest entry), the metrics scraper (`ok`, `pending`, `disabled` when Caddy has no `metrics`, or `failing`), the database (kind, file, size, schema version), the retention in force, and editing (whether it is on, and whether the Caddyfile and Caddy agree with the revisions) |
 

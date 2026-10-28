@@ -43,6 +43,16 @@ async function request(path, init) {
   return body
 }
 
+/** A query string for the parameters that have a value, with a leading ?; empty when none has. @param {Record<string, unknown>} params @returns {string} */
+function query(params) {
+  const out = new URLSearchParams()
+  for (const [name, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') out.set(name, String(value))
+  }
+  const text = out.toString()
+  return text ? `?${text}` : ''
+}
+
 /** @param {string} path @returns {Promise<any>} */
 function get(path) {
   return request(path, { headers: { Accept: 'application/json' } })
@@ -92,10 +102,29 @@ export function getSummary(window) {
 /**
  * Traffic per bucket. Answers 404 when the history is off.
  * @param {'minute'|'hour'} resolution
+ * @param {{from?: string, to?: string, host?: string}} [options]
  * @returns {Promise<{resolution: string, bucketSeconds: number, buckets: Array<{start: string, requests: number, bytes: number, status: Record<string, number>, avgMs: number|null, p95Ms: number|null, maxMs: number|null}>}>}
  */
-export function getTraffic(resolution) {
-  return get(`/api/traffic?resolution=${encodeURIComponent(resolution)}`)
+export function getTraffic(resolution, options = {}) {
+  return get(`/api/traffic${query({ resolution, from: options.from, to: options.to, host: options.host })}`)
+}
+
+/**
+ * The traffic of each host over a range, the busiest first. Answers 404 when the history is off.
+ * @param {'minute'|'hour'} resolution @param {{from?: string, to?: string, limit?: number}} [options]
+ * @returns {Promise<{hosts: Array<{host: string, requests: number, bytes: number, errors5xx: number, status: Record<string, number>, avgMs: number|null, p95Ms: number|null, maxMs: number|null}>}>}
+ */
+export function getHosts(resolution, options = {}) {
+  return get(`/api/hosts${query({ resolution, from: options.from, to: options.to, limit: options.limit })}`)
+}
+
+/**
+ * Stored requests, newest first. Answers 404 when the history is off.
+ * @param {{from?: string, to?: string, host?: string, minStatus?: number, maxStatus?: number, q?: string, limit?: number, before?: number}} [filters]
+ * @returns {Promise<{entries: Array<{id: number, time: string, host: string, method: string, path: string, status: number, durationMs: number, bytes: number, clientIp: string}>, next: number|null}>}
+ */
+export function getLogs(filters = {}) {
+  return get(`/api/logs${query(filters)}`)
 }
 
 /** @returns {Promise<{content: string, sha256: string}>} */

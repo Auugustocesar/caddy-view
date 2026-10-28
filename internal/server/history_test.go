@@ -74,6 +74,10 @@ func (failingHistory) QueryTraffic(context.Context, store.TrafficQuery) ([]store
 	return nil, errStore
 }
 
+func (failingHistory) QueryHosts(context.Context, store.HostQuery) ([]store.HostTotals, error) {
+	return nil, errStore
+}
+
 func (failingHistory) QueryMetrics(context.Context, store.MetricQuery) ([]store.MetricSample, error) {
 	return nil, errStore
 }

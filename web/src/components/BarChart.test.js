@@ -61,6 +61,49 @@ describe('BarChart accessibility', () => {
   })
 })
 
+describe('BarChart over several days', () => {
+  // Hourly buckets from 10:00 on 28 October, for three days.
+  const days = Array.from({ length: 72 }, (_, i) => ({ start: new Date(2026, 9, 28, 10 + i).toISOString(), requests: 10 + (i % 24) }))
+
+  const axisDays = (container) =>
+    Array.from(container.querySelectorAll('svg text.axis'))
+      .map((t) => t.textContent)
+      .filter((text) => /Oct|Nov/.test(text))
+
+  it('labels the start of each day, not every few hours', () => {
+    const { container } = render(BarChart, { title: 'Requests per hour', buckets: days, labels: 'date' })
+    expect(axisDays(container)).toEqual(['28 Oct', '29 Oct', '30 Oct', '31 Oct'])
+  })
+
+  it('does not put a time of day on the axis when it labels days', () => {
+    const { container } = render(BarChart, { title: 'Requests per hour', buckets: days, labels: 'date' })
+    const labels = Array.from(container.querySelectorAll('svg text.axis')).map((t) => t.textContent)
+    expect(labels.filter((text) => /^\d\d:\d\d$/.test(text))).toEqual([])
+  })
+
+  it('keeps the time of day on the axis by default', () => {
+    const { container } = render(BarChart, { title: 'Requests per hour', buckets: days })
+    expect(axisDays(container)).toEqual([])
+  })
+
+  it('puts the date and the time in the table, so a row is never ambiguous', () => {
+    const { container } = render(BarChart, { title: 'Requests per hour', buckets: days, labels: 'date' })
+    const rows = Array.from(container.querySelectorAll('details tbody tr')).map((r) => r.querySelector('td').textContent)
+    expect(rows.slice(0, 2)).toEqual(['28 Oct 10:00', '28 Oct 11:00'])
+    expect(rows[14]).toBe('29 Oct 00:00')
+  })
+
+  it('names the bar with the date and the time too', () => {
+    const { container } = render(BarChart, { title: 'Requests per hour', buckets: days, labels: 'date' })
+    expect(container.querySelector('rect[data-bar] title').textContent).toContain('28 Oct 10:00')
+  })
+
+  it('draws a bar for every hour', () => {
+    const { container } = render(BarChart, { title: 'Requests per hour', buckets: days, labels: 'date' })
+    expect(container.querySelectorAll('rect[data-bar]')).toHaveLength(72)
+  })
+})
+
 describe('BarChart without traffic', () => {
   it.each([
     ['no buckets', []],

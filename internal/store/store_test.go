@@ -71,6 +71,14 @@ func TestSQLiteStoreMeetsTheRollupContract(t *testing.T) {
 	storetest.RunRollups(t, func(t *testing.T) storetest.RollupStore { return openForContract(t) })
 }
 
+func TestMemoryStoreMeetsTheHostContract(t *testing.T) {
+	storetest.RunHosts(t, func(t *testing.T) storetest.HostStore { return store.NewMemory() })
+}
+
+func TestSQLiteStoreMeetsTheHostContract(t *testing.T) {
+	storetest.RunHosts(t, func(t *testing.T) storetest.HostStore { return openForContract(t) })
+}
+
 func TestMemoryStoreMeetsTheRetentionContract(t *testing.T) {
 	storetest.RunPrune(t, func(t *testing.T) storetest.PruneStore { return store.NewMemory() })
 }

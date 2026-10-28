@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatClock, formatCount, formatMs, formatPercent } from './format.js'
+import { formatBytes, formatClock, formatCount, formatDay, formatMs, formatPercent, formatStamp } from './format.js'
 
 describe('formatCount', () => {
   it.each([
@@ -65,5 +65,23 @@ describe('formatClock', () => {
   it('reads an ISO timestamp', () => {
     const when = new Date(2026, 9, 28, 22, 30)
     expect(formatClock(when.toISOString())).toBe('22:30')
+  })
+})
+
+describe('formatDay and formatStamp', () => {
+  it('say the local day and short month', () => {
+    expect(formatDay(new Date(2026, 9, 28, 14, 5))).toBe('28 Oct')
+    expect(formatDay(new Date(2026, 0, 3, 0, 0))).toBe('3 Jan')
+  })
+
+  it('add the time of day to the stamp', () => {
+    expect(formatStamp(new Date(2026, 9, 28, 14, 5))).toBe('28 Oct 14:05')
+    expect(formatStamp(new Date(2026, 11, 31, 0, 0))).toBe('31 Dec 00:00')
+  })
+
+  it('read an ISO timestamp', () => {
+    const when = new Date(2026, 9, 28, 22, 30)
+    expect(formatDay(when.toISOString())).toBe('28 Oct')
+    expect(formatStamp(when.toISOString())).toBe('28 Oct 22:30')
   })
 })

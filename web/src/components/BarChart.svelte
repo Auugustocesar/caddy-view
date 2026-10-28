@@ -1,9 +1,12 @@
 <script>
   import { niceMax } from '../lib/chart.js'
-  import { formatClock, formatCount } from '../lib/format.js'
+  import { formatClock, formatCount, formatDay, formatStamp } from '../lib/format.js'
 
-  /** @type {{title: string, buckets: Array<{start: string, requests: number}>}} */
-  let { title, buckets } = $props()
+  /**
+   * `labels` says what the axis shows: the time of day, or, for a chart of several days, the day where each one starts.
+   * @type {{title: string, buckets: Array<{start: string, requests: number}>, labels?: 'time'|'date'}}
+   */
+  let { title, buckets, labels = 'time' } = $props()
 
   const HEIGHT = 220
   const PAD = { left: 48, right: 8, top: 10, bottom: 26 }
@@ -19,6 +22,28 @@
   const plotHeight = HEIGHT - PAD.top - PAD.bottom
   const slot = $derived(plotWidth / Math.max(buckets.length, 1))
   const labelEvery = $derived(Math.max(1, Math.ceil(LABEL_GAP / slot)))
+  // Where the label of a time is written, and the time as the table and the name of a bar say it.
+  const stamp = $derived(labels === 'date' ? formatStamp : formatClock)
+  const labelled = $derived.by(() => {
+    const out = new Set()
+    if (labels !== 'date') {
+      for (let i = 0; i < buckets.length; i += labelEvery) out.add(i)
+      return out
+    }
+    // The first bucket of each day, when there is room for its label after the last one.
+    let last = -Infinity
+    let day = null
+    buckets.forEach((b, i) => {
+      const today = formatDay(b.start)
+      if (today === day) return
+      day = today
+      if ((i - last) * slot >= LABEL_GAP) {
+        out.add(i)
+        last = i
+      }
+    })
+    return out
+  })
   const ticks = $derived([0, top / 2, top])
   const yOf = (value) => PAD.top + plotHeight - (value / top) * plotHeight
 </script>
@@ -38,10 +63,10 @@
           {@const barWidth = Math.max(1, slot * 0.68)}
           {@const x = PAD.left + i * slot + (slot - barWidth) / 2}
           <rect data-bar class="bar" {x} y={yOf(bucket.requests)} width={barWidth} height={(bucket.requests / top) * plotHeight} rx={Math.min(3, barWidth / 2)}>
-            <title>{formatClock(bucket.start)}: {formatCount(bucket.requests)} requests</title>
+            <title>{stamp(bucket.start)}: {formatCount(bucket.requests)} requests</title>
           </rect>
-          {#if i % labelEvery === 0}
-            <text class="axis" x={x + barWidth / 2} y={HEIGHT - 8} text-anchor="middle">{formatClock(bucket.start)}</text>
+          {#if labelled.has(i)}
+            <text class="axis" x={x + barWidth / 2} y={HEIGHT - 8} text-anchor="middle">{labels === 'date' ? formatDay(bucket.start) : formatClock(bucket.start)}</text>
           {/if}
         {/each}
       </svg>
@@ -53,7 +78,7 @@
         <thead><tr><th scope="col">Time</th><th scope="col">Requests</th></tr></thead>
         <tbody>
           {#each buckets as bucket}
-            <tr><td>{formatClock(bucket.start)}</td><td>{formatCount(bucket.requests)}</td></tr>
+            <tr><td>{stamp(bucket.start)}</td><td>{formatCount(bucket.requests)}</td></tr>
           {/each}
         </tbody>
       </table>

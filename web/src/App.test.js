@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte'
+import { fireEvent, render, screen, within } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.svelte'
 
@@ -28,6 +28,10 @@ function json(body) {
 
 // Routes the API calls the screens make.
 function fakeFetch(url) {
+  // The Metrics tab and the log history ask with a range; the Dashboard asks for the resolution alone.
+  if (url.startsWith('/api/traffic?resolution=') && url.includes('&from=')) return Promise.resolve(json(traffic))
+  if (url.startsWith('/api/hosts?')) return Promise.resolve(json({ hosts: [{ host: 'app.example.com', requests: 12, bytes: 2048, errors5xx: 0, status: {}, avgMs: 5, p95Ms: 9, maxMs: 9 }] }))
+  if (url.startsWith('/api/logs?')) return Promise.resolve(json({ entries: [{ id: 1, time: '2026-10-28T11:00:00Z', host: 'app.example.com', method: 'GET', path: '/from-the-history', status: 200, durationMs: 4, bytes: 10, clientIp: '10.0.0.1' }], next: null }))
   switch (url) {
     case '/api/status':
       return Promise.resolve(json({ caddy: { reachable: true, endpoint: 'http://localhost:2019' } }))
@@ -77,12 +81,13 @@ afterEach(() => {
 })
 
 describe('App navigation', () => {
-  it('has exactly the five tabs, as links', () => {
+  it('has exactly the six tabs, as links', () => {
     openAt('/')
     const nav = screen.getByRole('navigation')
     const links = Array.from(nav.querySelectorAll('a')).map((a) => [a.textContent.trim(), a.getAttribute('href')])
     expect(links).toEqual([
       ['Dashboard', '/'],
+      ['Metrics', '/metrics'],
       ['Logs', '/logs'],
       ['Sites', '/sites'],
       ['Caddyfile', '/caddyfile'],
@@ -93,6 +98,7 @@ describe('App navigation', () => {
   it.each([
     ['/', 'Dashboard'],
     ['/config', 'Config'],
+    ['/metrics', 'Metrics'],
     ['/logs', 'Logs'],
     ['/sites', 'Sites'],
     ['/caddyfile', 'Caddyfile'],
@@ -178,6 +184,75 @@ describe('App screens', () => {
     openAt('/logs')
     await fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }))
     expect(closed).toHaveBeenCalledOnce()
+  })
+
+  it('opens the metrics on the Metrics tab', async () => {
+    openAt('/metrics')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Metrics' })).toBeTruthy()
+    expect(await screen.findByRole('table', { name: 'Hosts' })).toBeTruthy()
+  })
+})
+
+describe('App logs view', () => {
+  const trackingStream = () => {
+    const state = { created: [], closed: 0 }
+    vi.stubGlobal(
+      'EventSource',
+      class extends QuietEventSource {
+        constructor(url) {
+          super()
+          state.created.push(url)
+        }
+        close() {
+          state.closed++
+        }
+      },
+    )
+    return state
+  }
+
+  it('shows the live tail first, and a choice between it and the history', () => {
+    trackingStream()
+    openAt('/logs')
+    const group = screen.getByRole('radiogroup', { name: 'Logs view' })
+    expect(within(group).getAllByRole('radio').map((r) => [r.textContent.trim(), r.getAttribute('aria-checked')])).toEqual([
+      ['Live', 'true'],
+      ['History', 'false'],
+    ])
+    expect(screen.getByLabelText('Filter')).toBeTruthy()
+  })
+
+  it('shows the history search instead of the tail, and closes the stream while it does', async () => {
+    const stream = trackingStream()
+    openAt('/logs')
+    expect(stream.created).toHaveLength(1)
+
+    await fireEvent.click(screen.getByRole('radio', { name: 'History' }))
+    expect(await screen.findByText('/from-the-history')).toBeTruthy()
+    expect(screen.queryByLabelText('Filter')).toBeNull()
+    expect(stream.closed).toBe(1)
+    expect(screen.getByLabelText('Search path')).toBeTruthy()
+  })
+
+  it('opens the stream again when it goes back to the live tail', async () => {
+    const stream = trackingStream()
+    openAt('/logs')
+    await fireEvent.click(screen.getByRole('radio', { name: 'History' }))
+    await screen.findByText('/from-the-history')
+    await fireEvent.click(screen.getByRole('radio', { name: 'Live' }))
+    expect(stream.created).toHaveLength(2)
+    expect(screen.getByLabelText('Filter')).toBeTruthy()
+  })
+
+  it('does not open the stream for the history when the page is opened on it', async () => {
+    const stream = trackingStream()
+    openAt('/logs')
+    await fireEvent.click(screen.getByRole('radio', { name: 'History' }))
+    await fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }))
+    await fireEvent.click(screen.getByRole('link', { name: 'Logs' }))
+    // Back on Logs it is the live tail again, as a new visit starts.
+    expect(screen.getByRole('radio', { name: 'Live' }).getAttribute('aria-checked')).toBe('true')
+    expect(stream.created).toHaveLength(2)
   })
 })
 

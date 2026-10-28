@@ -5,6 +5,7 @@ describe('tabs', () => {
   it('lists the tabs in order, each with its own path', () => {
     expect(TABS.map((t) => [t.id, t.label, t.path])).toEqual([
       ['dashboard', 'Dashboard', '/'],
+      ['metrics', 'Metrics', '/metrics'],
       ['logs', 'Logs', '/logs'],
       ['sites', 'Sites', '/sites'],
       ['caddyfile', 'Caddyfile', '/caddyfile'],
@@ -19,6 +20,8 @@ describe('tabFromPath', () => {
     ['', 'dashboard'],
     ['/config', 'config'],
     ['/config/', 'config'],
+    ['/metrics', 'metrics'],
+    ['/metrics/', 'metrics'],
     ['/logs', 'logs'],
     ['/logs/', 'logs'],
     ['/sites', 'sites'],

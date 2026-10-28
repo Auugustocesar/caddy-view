@@ -3,12 +3,15 @@
   import { LogStream } from './lib/logstream.js'
   import { startPolling } from './lib/poller.js'
   import { TABS, tabFromPath } from './lib/router.js'
+  import Segmented from './components/Segmented.svelte'
   import { applyTheme, loadTheme, saveTheme, toggledTheme } from './lib/theme.js'
   import CaddyfileView from './screens/CaddyfileView.svelte'
   import ConfigView from './screens/ConfigView.svelte'
   import SitesView from './screens/SitesView.svelte'
   import Dashboard from './screens/Dashboard.svelte'
+  import LogHistory from './screens/LogHistory.svelte'
   import LogView from './screens/LogView.svelte'
+  import MetricsView from './screens/MetricsView.svelte'
 
   const POLL_MS = 5000
   const LOG_URL = '/api/logs/stream?backlog=100'
@@ -17,6 +20,7 @@
   const ICONS = {
     dashboard: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     config: '<path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+    metrics: '<path d="M5 20V11M12 20V4M19 20v-6"/>',
     logs: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
     sites: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
     caddyfile: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13l-2 2 2 2M15 13l2 2-2 2"/>',
@@ -107,13 +111,21 @@
     return () => (current = false)
   })
 
-  // Logs: the stream is open only while the tab is.
+  // Logs: the stream is open only while the live tail is showing. A new visit to the tab starts on the live tail.
+  const LOG_VIEWS = [
+    { value: 'live', label: 'Live' },
+    { value: 'history', label: 'History' },
+  ]
+  let logsView = $state('live')
+  $effect(() => {
+    if (tab !== 'logs') logsView = 'live'
+  })
   let logs = $state({ lines: [], status: 'connecting', reason: '', paused: false, heldCount: 0 })
   let filter = $state('')
   let stream = $state.raw(null)
 
   $effect(() => {
-    if (tab !== 'logs') return
+    if (tab !== 'logs' || logsView !== 'live') return
     const sync = () => {
       logs = {
         lines: current.lines,
@@ -162,15 +174,24 @@
     <CaddyfileView />
   {:else if tab === 'config'}
     <ConfigView {config} loadError={configError} />
+  {:else if tab === 'metrics'}
+    <MetricsView />
   {:else}
-    <LogView
-      {...logs}
-      {filter}
-      onpause={() => stream?.pause()}
-      onresume={() => stream?.resume()}
-      onclear={() => stream?.clear()}
-      onfilter={(text) => (filter = text)}
-    />
+    <div class="view-switch">
+      <Segmented label="Logs view" options={LOG_VIEWS} value={logsView} onchange={(view) => (logsView = view)} />
+    </div>
+    {#if logsView === 'live'}
+      <LogView
+        {...logs}
+        {filter}
+        onpause={() => stream?.pause()}
+        onresume={() => stream?.resume()}
+        onclear={() => stream?.clear()}
+        onfilter={(text) => (filter = text)}
+      />
+    {:else}
+      <LogHistory />
+    {/if}
   {/if}
 </main>
 
@@ -244,6 +265,9 @@
   }
   .theme:hover {
     color: var(--text);
+  }
+  .view-switch {
+    margin-bottom: 1rem;
   }
   main {
     max-width: 72rem;

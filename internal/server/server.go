@@ -93,6 +93,7 @@ func New(c Caddy, opts Options) http.Handler {
 	if opts.History != nil {
 		routes["/api/logs"] = onGet(a.logs)
 		routes["/api/traffic"] = onGet(a.traffic)
+		routes["/api/hosts"] = onGet(a.hosts)
 		routes["/api/summary"] = onGet(a.summary)
 	}
 	if opts.Sites != nil {

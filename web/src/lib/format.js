@@ -46,3 +46,16 @@ export function formatClock(when) {
   const two = (n) => String(n).padStart(2, '0')
   return `${two(date.getHours())}:${two(date.getMinutes())}`
 }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** The local date as day and short month, such as "28 Oct". @param {string|Date} when @returns {string} */
+export function formatDay(when) {
+  const date = new Date(when)
+  return `${date.getDate()} ${MONTHS[date.getMonth()]}`
+}
+
+/** The local date and time, such as "28 Oct 14:05". @param {string|Date} when @returns {string} */
+export function formatStamp(when) {
+  return `${formatDay(when)} ${formatClock(when)}`
+}
