@@ -1,7 +1,8 @@
 # Phase 2 — History: SQLite, log ingestion, metrics
 
 Goal: restarting caddy-view loses nothing. Access logs and metrics are stored, searchable, and summarised in
-charts, and the UI gets the design pass that phase 1 deliberately left for the moment there is data to show.
+through an API. The interface for all of it (history tab, dashboard summary, charts and the design pass) is built
+once, in phase 4, so it is not written twice.
 
 Everything here is built tests first (see `docs/PLAN.md`, section 11).
 
@@ -13,8 +14,8 @@ Everything here is built tests first (see `docs/PLAN.md`, section 11).
 | Access log ingestion from a persistent cursor, surviving restarts, rotation and truncation | Editing Caddy, revisions, rollback (phase 3) |
 | `/metrics` scraper with counter deltas, stored as samples | Sites wizard (phase 4) |
 | Minute and hour rollups, retention and a database size cap | Per-site charts and rollup drill-down (phase 4) |
-| Log history search API and tab | Postgres (out of scope; the store boundary keeps the door open) |
-| Dashboard summary (req/s, 5xx rate, p95), first charts, design pass | |
+| Log history search API and dashboard summary API (req/s, 5xx rate, p95) | History search tab, dashboard tiles and charts, design pass (phase 4) |
+| | Postgres (out of scope; the store boundary keeps the door open) |
 
 ## Decisions
 
@@ -195,8 +196,9 @@ log.
   without requests. `inFlight` and `upstreams` come from the newest metric sample of each series within the last two
   minutes, and are `null` when the scraper has stored nothing that recent.
 
-Slice 2e is built in two steps: this API first, then the interface (history tab, dashboard tiles and charts, the
-design pass), so the interface is written against an API that already exists and is tested.
+The interface that uses these routes (history tab, dashboard tiles and charts, the design pass) is deliberately left
+to phase 4, where it is designed together with the sites wizard, so the front end is not built twice. It will be
+written against an API that already exists and is tested.
 
 ## Slices
 
@@ -206,12 +208,12 @@ design pass), so the interface is written against an API that already exists and
 | 2b | `internal/ingest`: cursor-based log reader feeding the store (resumable `logtail` core, batching, query-string stripping, invalid lines counted) | Restarts, rotation, truncation, partial lines and failing batches never repeat or lose a line |
 | 2c | `internal/promtext` (a small Prometheus text parser) and the scraper with counter deltas | Deltas, counter resets and a missing `metrics` option are handled; samples are stored |
 | 2d | Rollups, retention, size cap | Rollups match the raw entries; retention and the cap delete the right rows |
-| 2e | Part 1: API (`/api/logs`, `/api/traffic`, `/api/summary`). Part 2: history search tab, dashboard summary and charts, design pass | Go and JavaScript tests pass; the UI shows history after a restart |
-| 2f | Check against the test Caddy over a few days of real traffic, including a real log rotation | Numbers in the UI match the log file; nothing repeats or disappears across a restart and a rotation |
+| 2e | API (`/api/logs`, `/api/traffic`, `/api/summary`); the interface moves to phase 4 | Go tests pass; the API answers from the history after a restart |
+| 2f | Check against the test Caddy over a few days of real traffic, including a real log rotation | Numbers from the API match the log file; nothing repeats or disappears across a restart and a rotation |
 
 ## Open questions
 
-- **Charts library.** `docs/PLAN.md` names uPlot (small, fast, no framework). Slice 2e confirms it by checking its
+- **Charts library (phase 4).** `docs/PLAN.md` names uPlot (small, fast, no framework). Phase 4 confirms it by checking its
   size and licence before adding the dependency, and keeps the markup accessible (a table alternative for each
   chart).
 - **Metrics label cardinality.** Settled in slice 2c: a fixed set of aggregated series (see the metrics section).

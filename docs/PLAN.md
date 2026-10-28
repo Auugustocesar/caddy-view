@@ -188,7 +188,7 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 | 1 | Read-only: Dashboard, Config, live Logs | Works against the test Caddy |
 | 2 | SQLite, log ingestion with cursor, metrics scraper | Restarting the UI loses no logs or metrics |
 | 3 | Caddyfile edit, validate, apply, rollback | An invalid config never leaves Caddy broken |
-| 4 | Sites wizard and rollup charts | Creating a reverse proxy from the UI works |
+| 4 | Sites wizard, rollup charts, and the whole front end for history (log search tab, dashboard summary, design pass) | Creating a reverse proxy from the UI works |
 | 5 | Full login, release, Docker, docs | Fresh-machine install takes minutes |
 
 MVP is phases 0 to 3. Phase 0 is complete: CI runs gofmt, vet and race tests on Linux, macOS and Windows, and
