@@ -32,6 +32,36 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
+  integration:
+    name: integration (real Caddy)
+    runs-on: ubuntu-latest
+    env:
+      CADDY_VERSION: 2.11.7
+      # A missing Caddy binary must fail this job, not skip the tests.
+      CADDY_VIEW_REQUIRE_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: install Caddy
+        run: |
+          set -euo pipefail
+          base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
+          archive="caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "${base}/${archive}"
+          curl -fsSLO "${base}/caddy_${CADDY_VERSION}_checksums.txt"
+          grep " ${archive}\$" "caddy_${CADDY_VERSION}_checksums.txt" | sha512sum -c -
+          mkdir "${RUNNER_TEMP}/caddy"
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}/caddy" caddy
+          echo "CADDY_BIN=${RUNNER_TEMP}/caddy/caddy" >> "${GITHUB_ENV}"
+
+      - name: integration tests
+        run: go test -race -tags integration -count=1 ./internal/configmgr
+
   web:
     name: web UI (tests and committed build)
     runs-on: ubuntu-latest

@@ -97,9 +97,36 @@ Without `--allow-edit` they are a 404, like the history routes without a store, 
   - `POST /api/revisions/{n}/rollback` answers like apply.
   - A revision is `number`, `time` (RFC 3339, UTC), `trigger`, `status`, `sha256` and `error` (when set).
 - **Failures of apply and rollback** are `{"error", "code", ...}`: `conflict` (409), `invalid` (422, with `line`),
+  `admin-moved` (422, added in 3e: the change would move or turn off Caddy's admin endpoint),
   `apply-failed` (502, Caddy refused to load it and the previous file was restored, with the `revision`),
   `recovery-required` (500, with the `revision`) and `not-found` (404, rollback of an unknown revision). Anything else
   is a 500 with a generic message; the cause goes to the log.
+
+## Against a real Caddy (slice 3e)
+
+The fakes of 3a prove the state machine; only a real Caddy proves that it matches what Caddy does.
+
+- **A new guard: the admin endpoint cannot move.** A Caddyfile without an `admin` option puts Caddy's Admin API back on
+  its default address. If caddy-view reaches Caddy through a unix socket or another port, a change that drops or edits
+  that line loads fine, and from then on caddy-view can neither validate, undo nor even see Caddy: the very failure the
+  manager exists to prevent. So `Apply` reads the running configuration (`GET /config/`) and the adapted candidate, and
+  refuses with `ErrAdminMoved` when the effective `admin.listen` differs (a missing one counts as Caddy's default,
+  `localhost:2019`) or the candidate sets `admin.disabled`. Nothing is written or loaded; the revision is `failed` with
+  the reason. The API answers 422 with code `admin-moved`. If the running configuration cannot be read, the apply fails
+  the same way as an unreachable Caddy.
+- **Test harness.** The tests start a real `caddy run` per test, from `CADDY_BIN` or the `PATH`, with its admin API
+  and its site on free loopback ports and its config and data directories in the test's temporary directory, so
+  nothing of the developer's or of the homelab's Caddy is touched. They carry the `integration` build tag, so
+  `go test ./...` stays fast and needs no Caddy. Without a Caddy binary they skip, unless
+  `CADDY_VIEW_REQUIRE_INTEGRATION=1`, which CI sets so that a missing binary fails.
+- **Cases.** A valid change is served at once; a syntax error is rejected with a line and the old site keeps
+  answering; a Caddyfile that adapts but cannot load (it names a certificate file that does not exist) is undone, the
+  file is back and the old site keeps answering; a rollback serves the earlier content; an edit made outside is a conflict and drift; a
+  candidate that moves the admin endpoint is refused and Caddy stays reachable.
+- **CI.** One extra job on Linux downloads a pinned Caddy release, checks its published SHA-512 and runs
+  `go test -tags integration ./internal/configmgr`. The existing jobs are unchanged.
+- **Not done here.** The homelab Caddy is not used by these tests: its Admin API is open on the LAN for the project
+  tests only, and changing its configuration is not something an automated test should do.
 
 ## Slices
 
@@ -109,7 +136,7 @@ Without `--allow-edit` they are a 404, like the history routes without a store, 
 | 3b | Revisions in `store`: migration 4, `SQLite` and `Memory`, a contract suite | Both stores pass the suite; numbers never repeat; data survives a reopen |
 | 3c | HTTP: `GET /api/caddyfile`, `POST /api/caddyfile/validate`, `POST /api/caddyfile/apply`, `GET /api/revisions[/{n}]`, `POST /api/revisions/{n}/rollback`; `serve --caddyfile` and `--allow-edit` | Routes are a 404 without `--allow-edit`; the API tests and the serve test pass |
 | 3d | Moved to phase 4: the Caddyfile tab (editor, validation, diff, apply, history, rollback). The API of 3c is complete without it | |
-| 3e | Integration against a real Caddy: invalid candidate, failing `/load`, rollback, an edit made outside | An invalid config never leaves Caddy broken, checked against a real Caddy |
+| 3e | The admin guard (`ErrAdminMoved`, with fakes), then integration against a real Caddy: invalid candidate, failing `/load`, rollback, an edit made outside, a moved admin endpoint | The guard tests pass with `-race`; an invalid config never leaves Caddy broken, checked against a real Caddy in CI |
 
 ## Open questions
 

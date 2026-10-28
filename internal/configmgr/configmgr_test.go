@@ -45,10 +45,21 @@ type loadCall struct {
 type fakeCaddy struct {
 	mu       sync.Mutex
 	adaptErr error
+	// running is the configuration Caddy is running; candidateConfig is what every candidate adapts to. Both are empty
+	// by default, which means the default admin endpoint for both.
+	running         map[string]any
+	runningErr      error
+	candidateConfig map[string]any
 	// loadFn gets the 1-based number of the call. Nil means every load succeeds.
 	loadFn  func(ctx context.Context, n int, content string) error
 	adapted []string
 	loads   []loadCall
+}
+
+func (f *fakeCaddy) Config(context.Context) (map[string]any, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.running, f.runningErr
 }
 
 func (f *fakeCaddy) Adapt(_ context.Context, content string) (*caddy.AdaptResult, error) {
@@ -58,7 +69,7 @@ func (f *fakeCaddy) Adapt(_ context.Context, content string) (*caddy.AdaptResult
 	if f.adaptErr != nil {
 		return nil, f.adaptErr
 	}
-	return &caddy.AdaptResult{Config: map[string]any{"adapted": true}}, nil
+	return &caddy.AdaptResult{Config: f.candidateConfig}, nil
 }
 
 func (f *fakeCaddy) Load(ctx context.Context, content string) error {
@@ -600,4 +611,83 @@ func TestReconcile(t *testing.T) {
 			t.Errorf("Reconcile() error = %v, want os.ErrNotExist", err)
 		}
 	})
+}
+
+func admin(settings map[string]any) map[string]any { return map[string]any{"admin": settings} }
+
+func TestApplyKeepsTheAdminEndpointFromMoving(t *testing.T) {
+	tests := []struct {
+		name      string
+		running   map[string]any
+		candidate map[string]any
+		wantMoved bool
+	}{
+		{"neither says anything", nil, nil, false},
+		{"the same custom endpoint", admin(map[string]any{"listen": "unix//run/caddy/admin.sock"}), admin(map[string]any{"listen": "unix//run/caddy/admin.sock"}), false},
+		{"the default written out", nil, admin(map[string]any{"listen": "localhost:2019"}), false},
+		{"other admin settings change", admin(map[string]any{"listen": "localhost:2019"}), admin(map[string]any{"listen": "localhost:2019", "enforce_origin": true}), false},
+		{"the endpoint is edited", admin(map[string]any{"listen": "localhost:2019"}), admin(map[string]any{"listen": "0.0.0.0:2019"}), true},
+		{"a custom endpoint is dropped", admin(map[string]any{"listen": "unix//run/caddy/admin.sock"}), nil, true},
+		{"the admin gets a custom endpoint", nil, admin(map[string]any{"listen": "localhost:9999"}), true},
+		{"the admin is turned off", nil, admin(map[string]any{"disabled": true}), true},
+		{"turned off while it was custom", admin(map[string]any{"listen": "localhost:9999"}), admin(map[string]any{"disabled": true}), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, original)
+			e.caddy.running, e.caddy.candidateConfig = tt.running, tt.candidate
+
+			rev, err := e.mgr.Apply(context.Background(), ApplyRequest{Content: candidate, BaseSHA256: sum(original)})
+			if !tt.wantMoved {
+				if err != nil {
+					t.Fatalf("Apply() error = %v, want it applied", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrAdminMoved) {
+				t.Fatalf("Apply() error = %v, want ErrAdminMoved", err)
+			}
+			if got := e.disk(t); got != original {
+				t.Errorf("file = %q, want the original untouched", got)
+			}
+			if len(e.caddy.loads) != 0 {
+				t.Errorf("caddy loaded %d times, want none", len(e.caddy.loads))
+			}
+			if rev.Status != store.StatusFailed || rev.Error == "" {
+				t.Errorf("revision = %+v, want failed with the reason", rev)
+			}
+		})
+	}
+}
+
+func TestApplyFailsWhenTheRunningConfigurationCannotBeRead(t *testing.T) {
+	e := newEnv(t, original)
+	e.caddy.runningErr = errBoom
+
+	rev, err := e.mgr.Apply(context.Background(), ApplyRequest{Content: candidate, BaseSHA256: sum(original)})
+	if !errors.Is(err, errBoom) || errors.Is(err, ErrAdminMoved) {
+		t.Fatalf("Apply() error = %v, want the read error and not ErrAdminMoved", err)
+	}
+	if got := e.disk(t); got != original || len(e.caddy.loads) != 0 {
+		t.Errorf("file = %q with %d loads, want nothing changed", got, len(e.caddy.loads))
+	}
+	if rev.Status != store.StatusFailed {
+		t.Errorf("revision status = %q, want failed", rev.Status)
+	}
+}
+
+func TestRollbackAlsoKeepsTheAdminEndpointFromMoving(t *testing.T) {
+	e := newEnv(t, original)
+	ctx := context.Background()
+	if _, err := e.mgr.Apply(ctx, ApplyRequest{Content: candidate, BaseSHA256: sum(original)}); err != nil {
+		t.Fatal(err)
+	}
+	// Revision 1 now adapts to a configuration that moves the admin, as an old revision may.
+	e.caddy.candidateConfig = admin(map[string]any{"listen": "localhost:9999"})
+	if _, err := e.mgr.Rollback(ctx, 1); !errors.Is(err, ErrAdminMoved) {
+		t.Errorf("Rollback() error = %v, want ErrAdminMoved", err)
+	}
+	if got := e.disk(t); got != candidate {
+		t.Errorf("file = %q, want the content before the rollback", got)
+	}
 }

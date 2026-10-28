@@ -24,6 +24,9 @@ var (
 	ErrConflict = errors.New("the Caddyfile changed since it was read")
 	// ErrInvalid means Caddy rejected the candidate. The cause is the *caddy.AdaptError, with the line.
 	ErrInvalid = errors.New("caddy rejected the Caddyfile")
+	// ErrAdminMoved means the candidate would move or turn off the Admin API that caddy-view reaches Caddy through.
+	// Loading it would leave Caddy running a configuration that caddy-view could neither check nor undo.
+	ErrAdminMoved = errors.New("the Caddyfile would move or turn off Caddy's admin endpoint")
 	// ErrApplyFailed means Caddy refused to load the candidate and the previous configuration was restored.
 	ErrApplyFailed = errors.New("caddy could not load the Caddyfile, the previous one was restored")
 	// ErrRecoveryRequired means the candidate failed to load and the previous Caddyfile could not be restored or
@@ -33,6 +36,7 @@ var (
 
 // Caddy is what the Manager needs from the Admin API client.
 type Caddy interface {
+	Config(ctx context.Context) (map[string]any, error)
 	Adapt(ctx context.Context, caddyfile string) (*caddy.AdaptResult, error)
 	Load(ctx context.Context, caddyfile string) error
 }
@@ -210,7 +214,11 @@ func (m *Manager) apply(ctx context.Context, req ApplyRequest) (store.Revision, 
 		return store.Revision{}, fmt.Errorf("record the revision: %w", err)
 	}
 
-	if _, err := m.Validate(ctx, req.Content); err != nil {
+	adapted, err := m.Validate(ctx, req.Content)
+	if err == nil {
+		err = m.checkAdmin(ctx, adapted.Config)
+	}
+	if err != nil {
 		return m.finish(ctx, rev, store.StatusFailed, err)
 	}
 	if rev, err = m.setStatus(ctx, rev, store.StatusLoading, nil); err != nil {
@@ -232,6 +240,38 @@ func (m *Manager) apply(ctx context.Context, req ApplyRequest) (store.Revision, 
 			fmt.Errorf("%w: %w; restore: %w", ErrRecoveryRequired, loadErr, restoreErr))
 	}
 	return m.finish(ctx, rev, store.StatusFailed, fmt.Errorf("%w: %w", ErrApplyFailed, loadErr))
+}
+
+// defaultAdmin is where Caddy puts its Admin API when the configuration does not say.
+const defaultAdmin = "localhost:2019"
+
+// adminListen is where a configuration puts the Admin API, and whether it turns it off.
+func adminListen(cfg map[string]any) (listen string, disabled bool) {
+	listen = defaultAdmin
+	admin, _ := cfg["admin"].(map[string]any)
+	if l, ok := admin["listen"].(string); ok && l != "" {
+		listen = l
+	}
+	disabled, _ = admin["disabled"].(bool)
+	return listen, disabled
+}
+
+// checkAdmin refuses a candidate that would move or turn off the Admin API of the running Caddy: it would load,
+// and caddy-view would then have no way to check or undo anything.
+func (m *Manager) checkAdmin(ctx context.Context, candidate map[string]any) error {
+	running, err := m.caddy.Config(ctx)
+	if err != nil {
+		return fmt.Errorf("read the running configuration: %w", err)
+	}
+	now, _ := adminListen(running)
+	next, disabled := adminListen(candidate)
+	switch {
+	case disabled:
+		return fmt.Errorf("%w: the admin endpoint %s would be turned off", ErrAdminMoved, now)
+	case next != now:
+		return fmt.Errorf("%w: it is at %s and the Caddyfile would put it at %s; keep the admin option as it is", ErrAdminMoved, now, next)
+	}
+	return nil
 }
 
 // restore puts the previous content back on disk and has Caddy load it. It ignores the cancellation of ctx, so a

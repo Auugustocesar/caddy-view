@@ -271,6 +271,11 @@ func TestApply(t *testing.T) {
 			status: http.StatusUnprocessableEntity, code: "invalid", line: 5,
 		},
 		{
+			name:   "would move the admin endpoint",
+			err:    fmt.Errorf("%w: it listens on localhost:2019 now", configmgr.ErrAdminMoved),
+			status: http.StatusUnprocessableEntity, code: "admin-moved",
+		},
+		{
 			name: "load refused, previous restored", err: fmt.Errorf("%w: boom", configmgr.ErrApplyFailed),
 			rev:    store.Revision{Number: 8, Status: store.StatusFailed},
 			status: http.StatusBadGateway, code: "apply-failed", revision: true,

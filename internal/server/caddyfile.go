@@ -134,6 +134,8 @@ func (a *api) changeFailed(w http.ResponseWriter, r *http.Request, rev store.Rev
 			f.Error, f.Line = adaptErr.Message, adaptErr.Line
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, f)
+	case errors.Is(err, configmgr.ErrAdminMoved):
+		writeJSON(w, http.StatusUnprocessableEntity, failureJSON{Error: err.Error(), Code: "admin-moved"})
 	case errors.Is(err, configmgr.ErrApplyFailed):
 		writeJSON(w, http.StatusBadGateway, failureJSON{Error: err.Error(), Code: "apply-failed", Revision: revisionAnswer(rev, false)})
 	case errors.Is(err, configmgr.ErrRecoveryRequired):
