@@ -53,8 +53,10 @@ jobs:
       - name: npm test
         run: npm test
 
+      # Production dependencies only: the build tools are not shipped (the built UI is committed), and an advisory
+      # in them, such as the deepmerge one in the Svelte Vite plugin, would otherwise block every commit.
       - name: npm audit
-        run: npm audit
+        run: npm audit --omit=dev
 
       - name: npm run build
         run: npm run build
