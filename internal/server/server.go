@@ -39,6 +39,14 @@ type Options struct {
 	History History
 	// Editor serves the Caddyfile and revision routes, which change Caddy. When nil, those routes are a 404.
 	Editor Editor
+	// Ingest, Scrape and Database feed /api/system; each one that is nil leaves its section out.
+	Ingest   IngestStatus
+	Scrape   ScrapeStatus
+	Database Database
+	// Retention is reported by /api/system when not nil.
+	Retention *Retention
+	// CaddyfilePath is the file reported by /api/system under editing.
+	CaddyfilePath string
 	// Now gives the current time for the history routes. Zero means time.Now.
 	Now func() time.Time
 	// MaxStreams caps the concurrent log streams. Zero means 8.
@@ -76,6 +84,7 @@ func New(c Caddy, opts Options) http.Handler {
 		"/api/config":      onGet(a.config),
 		"/api/sites":       onGet(a.sites),
 		"/api/logs/stream": onGet(a.logStream),
+		"/api/system":      onGet(a.system),
 	}
 	if opts.History != nil {
 		routes["/api/logs"] = onGet(a.logs)

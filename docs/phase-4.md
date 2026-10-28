@@ -116,7 +116,31 @@ http://plain.example.com {
 - `database`: size, schema version, and the retention policy in force.
 - `editing`: whether `--allow-edit` is on, the Caddyfile and managed file, drift and `Running` from `Reconcile`, whether
   the managed file is imported, the backup mode.
-The ingestion and the scraper keep the small amount of state they need to answer, behind interfaces the server defines.
+The answer is one JSON object; a section whose source does not exist is left out, a failure inside a section is that
+section's own `error` (the cause goes to the log, the client gets a generic text), and the route itself still answers 200
+(it is a status page, like `/api/status`). Times are RFC 3339 in UTC.
+
+```json
+{
+  "caddy": {"reachable": true, "endpoint": "unix:///run/caddy/admin.sock"},
+  "ingestion": {"state": "following", "file": "/var/log/caddy/access.log", "offset": 482113,
+                "skippedLines": 0, "gaps": 1, "newestEntry": "2026-10-28T09:12:44.512Z"},
+  "scraper": {"state": "ok", "lastSuccess": "2026-10-28T09:12:50Z"},
+  "database": {"kind": "sqlite", "file": "/data/caddy-view.db", "sizeBytes": 18874368, "schemaVersion": 4},
+  "retention": {"rawSeconds": 1209600, "rollupsSeconds": 7776000, "maxBytes": 1073741824},
+  "editing": {"enabled": true, "caddyfile": "/etc/caddy/Caddyfile",
+              "drift": {"known": true, "drifted": false, "revision": 12, "running": "matches"}}
+}
+```
+
+- `ingestion.state` is `waiting` (nothing read yet, or the file is not there; before the log file is found `file` is
+  empty), `following` or `failing` (with `error`). It exists when the history does.
+- `scraper.state` is `pending`, `ok`, `disabled` (Caddy answered 404: `metrics` is not enabled) or `failing` (with
+  `error`; `lastSuccess` is kept).
+- `database.kind` is `sqlite` or `memory`; a memory store has no `file` and no `schemaVersion`.
+- `editing.drift.running` is `matches`, `differs` or `unknown`, from `Reconcile` (phase 3, B3).
+- The producers keep their own state: `ingest.Ingester.Status()` and `scrape.Scraper.Status()`, safe to call while they
+  run. Until `serve` has found the access log there is no ingester, so `serve` answers `waiting` for it.
 
 ### The interface
 
@@ -148,7 +172,7 @@ the interface then is built on APIs that exist and are tested, as for the histor
 
 | Slice | Deliverable | Done when |
 |---|---|---|
-| 4a | The status API (`/api/system`) with the state it needs from ingestion and the scraper | Handler tests with fakes pass; the numbers match the store on a real run |
+| 4a | The status API (`/api/system`) with the state it needs from ingestion and the scraper (done) | Handler tests with fakes pass; the numbers match the store on a real run |
 | 4b | Managed sites, backend: migration 5, validation, the generator, apply with a managed file, rollback of both, `--managed-file`, `--backup-mode`, the API (`/api/managed-sites`) | A real Caddy serves a site created through the API, refuses a duplicate hostname, and rolls it back; a killed apply is recovered |
 | 4c | Design system, app shell, Dashboard with tiles and the traffic chart | Tests pass; looked at in light, dark and phone width |
 | 4d | Caddyfile tab: the editor (colours, line numbers, matching pairs, error line marked), `Format` and `POST /api/caddyfile/format`, live validation, diff, apply, history, rollback | `Format` matches `caddy fmt` on a real Caddy for the cases tested; an invalid Caddyfile is refused in the browser with its line marked, a good one applied and rolled back |

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
@@ -173,22 +174,23 @@ func caddyfileLock(ctx context.Context, caddyfile string) (*instancelock.Lock, e
 
 // openHistory opens the store that keeps the history: in memory with --no-persist, otherwise the SQLite database in
 // the data directory. The directory is only touched when persisting.
-func openHistory(ctx context.Context, dataDir string, noPersist bool) (history, error) {
+func openHistory(ctx context.Context, dataDir string, noPersist bool) (h history, file string, err error) {
 	if noPersist {
-		return store.NewMemory(), nil
+		return store.NewMemory(), "", nil
 	}
 	if dataDir == "" {
 		dir, err := store.DefaultDataDir()
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		dataDir = dir
 	}
-	s, err := store.OpenSQLite(ctx, filepath.Join(dataDir, databaseFile))
+	file = filepath.Join(dataDir, databaseFile)
+	s, err := store.OpenSQLite(ctx, file)
 	if err != nil {
-		return nil, fmt.Errorf("open history in %s: %w", dataDir, err)
+		return nil, "", fmt.Errorf("open history in %s: %w", dataDir, err)
 	}
-	return s, nil
+	return s, file, nil
 }
 
 func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -253,7 +255,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		defer lock.Release() // the error of giving up a lock that the system frees at exit anyway is not worth a message
 	}
 
-	hist, err := openHistory(ctx, *dataDir, *noPersist)
+	hist, dbFile, err := openHistory(ctx, *dataDir, *noPersist)
 	if err != nil {
 		fmt.Fprintf(stderr, "serve: %v\n", err)
 		return 1
@@ -271,15 +273,21 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		AccessLogPath: *accessLog,
 		UI:            web.Handler(),
 		History:       hist,
+		Database:      databaseInfo{store: hist, file: dbFile},
+		Retention:     &server.Retention{Raw: policy.Raw, Rollups: policy.Rollups, MaxBytes: policy.MaxBytes},
 	}
+	ingestion := &ingestState{path: *accessLog}
+	scraper := scrape.New(client, hist, scrape.Options{Logger: logger})
+	opts.Ingest, opts.Scrape = ingestion, scraper
 	if *allowEdit {
 		opts.Editor = newEditor(ctx, client, hist, *caddyfile, logger)
+		opts.CaddyfilePath = *caddyfile
 	}
 	handler := server.New(client, opts)
 	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.
-	stopIngest := startIngest(ctx, hist, client, *accessLog, *storeQuery, logger)
+	stopIngest := startIngest(ctx, ingestion, hist, client, *accessLog, *storeQuery, logger)
 	defer stopIngest()
-	stopScrape := startScrape(ctx, hist, client, logger)
+	stopScrape := startScrape(ctx, scraper)
 	defer stopScrape()
 	stopRetain := background(ctx, func(ctx context.Context) {
 		// Run only returns nil, after the context is cancelled.
@@ -318,7 +326,7 @@ func background(ctx context.Context, fn func(ctx context.Context)) (stop func())
 // startIngest copies the access log into the history in the background and returns a function that stops it and
 // waits for it to finish. The file is the one given with --access-log, otherwise the first JSON file log of the
 // running Caddy configuration, which is looked up again until one appears.
-func startIngest(ctx context.Context, h ingest.Store, client *caddy.Client, accessLog string, keepQuery bool, logger *slog.Logger) (stop func()) {
+func startIngest(ctx context.Context, state *ingestState, h ingest.Store, client *caddy.Client, accessLog string, keepQuery bool, logger *slog.Logger) (stop func()) {
 	return background(ctx, func(ctx context.Context) {
 		path := accessLog
 		for path == "" {
@@ -333,17 +341,61 @@ func startIngest(ctx context.Context, h ingest.Store, client *caddy.Client, acce
 			}
 		}
 		logger.Info("ingesting the access log into the history", "path", path)
+		ingester := ingest.New(h, ingest.Options{Path: path, KeepQuery: keepQuery, Logger: logger})
+		state.found(ingester)
 		// Run only returns nil, after the context is cancelled.
-		_ = ingest.New(h, ingest.Options{Path: path, KeepQuery: keepQuery, Logger: logger}).Run(ctx)
+		_ = ingester.Run(ctx)
 	})
+}
+
+// ingestState is what /api/system reports about ingestion. The ingester only exists once the access log is known,
+// which can take a while when Caddy has none configured yet, so until then it reports that it is waiting.
+type ingestState struct {
+	path     string // the --access-log given, or empty while it is still to be found
+	ingester atomic.Pointer[ingest.Ingester]
+}
+
+func (s *ingestState) found(i *ingest.Ingester) { s.ingester.Store(i) }
+
+func (s *ingestState) Status() ingest.Status {
+	if i := s.ingester.Load(); i != nil {
+		return i.Status()
+	}
+	return ingest.Status{State: ingest.StateWaiting, Path: s.path}
+}
+
+// databaseInfo tells /api/system about the history store.
+type databaseInfo struct {
+	store history
+	file  string // empty for the memory store
+}
+
+func (d databaseInfo) Info(ctx context.Context) (server.DatabaseInfo, error) {
+	size, err := d.store.Size(ctx)
+	if err != nil {
+		return server.DatabaseInfo{}, fmt.Errorf("size of the history: %w", err)
+	}
+	info := server.DatabaseInfo{Kind: "memory", File: d.file, SizeBytes: size}
+	if d.file == "" {
+		return info, nil
+	}
+	info.Kind = "sqlite"
+	if v, ok := d.store.(interface {
+		SchemaVersion(ctx context.Context) (int, error)
+	}); ok {
+		if info.SchemaVersion, err = v.SchemaVersion(ctx); err != nil {
+			return server.DatabaseInfo{}, fmt.Errorf("schema version of the history: %w", err)
+		}
+	}
+	return info, nil
 }
 
 // startScrape copies Caddy's metrics into the history in the background and returns a function that stops it and
 // waits for it to finish.
-func startScrape(ctx context.Context, h scrape.Store, client *caddy.Client, logger *slog.Logger) (stop func()) {
+func startScrape(ctx context.Context, scraper *scrape.Scraper) (stop func()) {
 	return background(ctx, func(ctx context.Context) {
 		// Run only returns nil, after the context is cancelled.
-		_ = scrape.New(client, h, scrape.Options{Logger: logger}).Run(ctx)
+		_ = scraper.Run(ctx)
 	})
 }
 

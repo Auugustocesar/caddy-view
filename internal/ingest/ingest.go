@@ -16,6 +16,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/store"
@@ -59,6 +60,9 @@ const (
 type Ingester struct {
 	store Store
 	opts  Options
+
+	mu     sync.Mutex
+	status Status
 }
 
 // New returns an Ingester that writes to s.
@@ -75,7 +79,50 @@ func New(s Store, opts Options) *Ingester {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Ingester{store: s, opts: opts}
+	return &Ingester{store: s, opts: opts, status: Status{State: StateWaiting, Path: opts.Path}}
+}
+
+// Once polls the file one time: it ingests everything added since the cursor, and returns when it reaches the end of
+// the last complete line. A missing file is not an error: there is nothing to read yet. The outcome is what Status
+// reports afterwards.
+func (i *Ingester) Once(ctx context.Context) error {
+	err := i.poll(ctx)
+	i.record(ctx, err)
+	return err
+}
+
+// record keeps the outcome of a poll for Status. A poll cut short by the end of the program says nothing.
+func (i *Ingester) record(ctx context.Context, pollErr error) {
+	status := Status{Path: i.opts.Path}
+	switch {
+	case pollErr != nil && ctx.Err() != nil:
+		return
+	case pollErr != nil:
+		status.State, status.Error = StateFailing, pollErr.Error()
+	default:
+		status.State = StateWaiting // until a file is found
+		if _, err := os.Stat(i.opts.Path); err == nil {
+			cursor, found, err := i.store.LoadCursor(ctx, i.opts.Path)
+			if err != nil {
+				status.State, status.Error = StateFailing, fmt.Sprintf("load cursor: %v", err)
+				break
+			}
+			status.State = StateFollowing
+			if found {
+				status.Offset, status.SkippedLines, status.Gaps = cursor.Offset, cursor.SkippedLines, cursor.Gaps
+			}
+		}
+	}
+	i.mu.Lock()
+	i.status = status
+	i.mu.Unlock()
+}
+
+// Status reports the state of the last poll. It is safe to call while Run is going.
+func (i *Ingester) Status() Status {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.status
 }
 
 // Run calls Once every PollInterval until ctx is done, and then returns nil. A failing poll is logged and retried:
@@ -105,9 +152,9 @@ func (i *Ingester) Run(ctx context.Context) error {
 	}
 }
 
-// Once ingests everything that was added to the file since the cursor, and returns when it reaches the end of the
+// poll ingests everything that was added to the file since the cursor, and returns when it reaches the end of the
 // last complete line. A missing file is not an error: there is nothing to read yet.
-func (i *Ingester) Once(ctx context.Context) error {
+func (i *Ingester) poll(ctx context.Context) error {
 	path := i.opts.Path
 	saved, found, err := i.store.LoadCursor(ctx, path)
 	if err != nil {

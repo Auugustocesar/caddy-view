@@ -32,6 +32,8 @@ type fakeEditor struct {
 	applyErr    error
 	rollbackRev store.Revision
 	rollbackErr error
+	drift       configmgr.Drift
+	driftErr    error
 
 	validated  []string
 	applied    []configmgr.ApplyRequest
@@ -48,6 +50,8 @@ func newEditor() *fakeEditor {
 }
 
 func (f *fakeEditor) Current(context.Context) (configmgr.File, error) { return f.file, f.currentErr }
+
+func (f *fakeEditor) Reconcile(context.Context) (configmgr.Drift, error) { return f.drift, f.driftErr }
 
 func (f *fakeEditor) Validate(_ context.Context, content string) (*caddy.AdaptResult, error) {
 	f.mu.Lock()

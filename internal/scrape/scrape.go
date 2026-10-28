@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/Auugustocesar/caddy-view/internal/promtext"
@@ -65,6 +66,9 @@ type Scraper struct {
 	// and only advances after a batch has been stored, so a failed write is not forgotten.
 	previous map[string]float64
 	loaded   bool
+
+	mu     sync.Mutex
+	status Status
 }
 
 // New returns a Scraper that reads from src and writes to st.
@@ -78,7 +82,7 @@ func New(src Source, st Store, opts Options) *Scraper {
 	if opts.Logger == nil {
 		opts.Logger = slog.New(slog.DiscardHandler)
 	}
-	return &Scraper{src: src, st: st, opts: opts, previous: make(map[string]float64)}
+	return &Scraper{src: src, st: st, opts: opts, previous: make(map[string]float64), status: Status{State: StatePending}}
 }
 
 // Run scrapes every Interval until ctx is done, and then returns nil. A failing scrape is logged and tried again.
@@ -107,8 +111,8 @@ func (s *Scraper) Run(ctx context.Context) error {
 	}
 }
 
-// Once scrapes Caddy one time and stores the selected series. Nothing is stored when the scrape fails.
-func (s *Scraper) Once(ctx context.Context) error {
+// scrape reads Caddy one time and stores the selected series. Nothing is stored when it fails.
+func (s *Scraper) scrape(ctx context.Context) error {
 	body, err := s.src.Metrics(ctx)
 	if err != nil {
 		return fmt.Errorf("scrape caddy metrics: %w", err)

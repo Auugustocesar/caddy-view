@@ -25,6 +25,7 @@ type Editor interface {
 	Rollback(ctx context.Context, number int64) (store.Revision, error)
 	Revision(ctx context.Context, number int64) (store.Revision, error)
 	Revisions(ctx context.Context, q store.RevisionQuery) ([]store.Revision, error)
+	Reconcile(ctx context.Context) (configmgr.Drift, error)
 }
 
 // maxBody is the largest request body the editing routes read.

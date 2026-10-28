@@ -148,7 +148,7 @@ real, on Windows here and on Linux and macOS in CI. `store.SQLiteURI` is the one
 URI, shared with the history store. It refuses a symbolic link at the lock path. `serve --allow-edit` exits with code 1
 and names the Caddyfile when the lock is taken; without `--allow-edit` nothing is locked.
 
-## B5. A system status API (phase 4, slice 4a; proposed in `docs/phase-4.md`)
+## B5. A system status API (phase 4, slice 4a; done)
 
 **Why.** The PLAN's Config tab shows database usage, and the reference has cards for Caddy and for ingestion. The data
 exists (cursor with skipped lines and gaps, store size, schema version, retention policy, scraper state) but no route
