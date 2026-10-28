@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,5 +315,70 @@ func TestSQLiteHandlesAreSafeToShareBetweenStores(t *testing.T) {
 	got, err := reader.QueryLogs(ctx, store.LogQuery{})
 	if err != nil || len(got) != 1 {
 		t.Errorf("second handle sees %+v, %v, want the entry written by the first", got, err)
+	}
+}
+
+func TestMemoryStoreMeetsTheRevisionContract(t *testing.T) {
+	storetest.RunRevisions(t, func(t *testing.T) storetest.RevisionStore { return store.NewMemory() })
+}
+
+func TestSQLiteStoreMeetsTheRevisionContract(t *testing.T) {
+	storetest.RunRevisions(t, func(t *testing.T) storetest.RevisionStore { return openForContract(t) })
+}
+
+func TestSQLiteKeepsRevisionsAcrossAReopen(t *testing.T) {
+	path := dbPath(t)
+	ctx := context.Background()
+	first := open(t, path)
+	added, err := first.AddRevision(ctx, store.Revision{
+		Time: base, Trigger: store.TriggerManualEdit, Status: store.StatusPending, Content: "a", SHA256: strings.Repeat("ab", 32),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.UpdateRevision(ctx, added.Number, store.StatusApplied, ""); err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+
+	second := open(t, path)
+	got, ok, err := second.LatestApplied(ctx)
+	if err != nil || !ok || got.Number != added.Number || got.Content != "a" || !got.Time.Equal(base) {
+		t.Fatalf("LatestApplied after a reopen = %+v, %v, %v, want the stored revision", got, ok, err)
+	}
+	next, err := second.AddRevision(ctx, store.Revision{
+		Time: base, Trigger: store.TriggerManualEdit, Status: store.StatusPending, Content: "b", SHA256: strings.Repeat("ab", 32),
+	})
+	if err != nil || next.Number != added.Number+1 {
+		t.Errorf("next number after a reopen = %d, %v, want %d", next.Number, err, added.Number+1)
+	}
+}
+
+func TestSQLiteAddsRevisionsToAVersion3Database(t *testing.T) {
+	path := dbPath(t)
+	ctx := context.Background()
+	open(t, path).Close()
+
+	// Turn the database back into what the previous release left: no revisions, schema version 3.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, "DROP TABLE IF EXISTS config_revisions"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx, "PRAGMA user_version = 3"); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	s := open(t, path)
+	if v, err := s.SchemaVersion(ctx); err != nil || v != store.LatestSchemaVersion {
+		t.Fatalf("SchemaVersion = %d, %v, want %d", v, err, store.LatestSchemaVersion)
+	}
+	if _, err := s.AddRevision(ctx, store.Revision{
+		Time: base, Trigger: store.TriggerManualEdit, Status: store.StatusPending, Content: "a", SHA256: strings.Repeat("ab", 32),
+	}); err != nil {
+		t.Errorf("AddRevision after the upgrade: %v", err)
 	}
 }

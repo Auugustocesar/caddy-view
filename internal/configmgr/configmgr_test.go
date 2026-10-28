@@ -24,6 +24,12 @@ const (
 
 var errBoom = errors.New("boom")
 
+// Both real stores can back a Manager.
+var (
+	_ RevisionStore = (*store.Memory)(nil)
+	_ RevisionStore = (*store.SQLite)(nil)
+)
+
 func sum(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
@@ -241,7 +247,7 @@ func TestApplyWritesLoadsAndRecordsTheRevision(t *testing.T) {
 		t.Errorf("loads = %q, want only the candidate", got)
 	}
 	want := store.Revision{
-		Number: 1, Time: e.now.UnixMilli(), Trigger: store.TriggerManualEdit, Status: store.StatusApplied,
+		Number: 1, Time: e.now, Trigger: store.TriggerManualEdit, Status: store.StatusApplied,
 		Content: candidate, SHA256: sum(candidate),
 	}
 	if rev != want {

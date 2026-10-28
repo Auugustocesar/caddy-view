@@ -46,6 +46,24 @@ this document pins down the parts that section leaves open.
 - **Errors are sentinels** wrapped with the cause: `ErrConflict`, `ErrInvalid` (wrapping the `*caddy.AdaptError`, so
   the line number survives), `ErrApplyFailed` (the previous configuration was restored), `ErrRecoveryRequired`.
 
+## Revision storage (slice 3b)
+
+Both stores get five methods, the four `configmgr.RevisionStore` needs plus a listing for the history API:
+`AddRevision`, `UpdateRevision`, `LatestApplied`, `Revision` and `Revisions`.
+
+- **Table `config_revisions`**, migration 4: `number` is an `INTEGER PRIMARY KEY AUTOINCREMENT`, so a number is never
+  reused, even after a delete. Time is Unix ms UTC; content, digest, trigger, status and error are text.
+- **Validation.** `AddRevision` refuses, with `ErrInvalidRevision` and without taking a number: an unknown or empty
+  trigger or status, a digest that is not 64 lower-case hex characters, and a zero time. The store checks the shape of
+  the digest, not that it matches the content; that is the manager's job. An empty content is valid (an empty
+  Caddyfile). The `Number` passed in is ignored. `UpdateRevision` refuses an unknown status the same way and an unknown
+  number with `ErrNotFound`; `Revision` of an unknown number is also `ErrNotFound`.
+- **`LatestApplied`** is the applied revision with the highest number, not the last one updated.
+- **`Revisions`** lists newest first, `Limit` (default 50, capped at 1,000, negative is `ErrInvalidQuery`) and
+  `Before` (a number, to page backwards). The content is included; the API may leave it out of the list.
+- **Concurrency and closing** follow the other store methods: safe to share, `ErrClosed` after `Close`.
+- Revisions are never pruned by retention: they are the rollback history and are small.
+
 ## Slices
 
 | Slice | Deliverable | Done when |

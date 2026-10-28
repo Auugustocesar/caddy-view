@@ -200,7 +200,7 @@ func (m *Manager) apply(ctx context.Context, req ApplyRequest) (store.Revision, 
 		trigger = store.TriggerManualEdit
 	}
 	rev, err := m.store.AddRevision(ctx, store.Revision{
-		Time:    m.now().UnixMilli(),
+		Time:    m.now(),
 		Trigger: trigger,
 		Status:  store.StatusPending,
 		Content: req.Content,

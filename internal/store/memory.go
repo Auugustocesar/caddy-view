@@ -11,13 +11,14 @@ import (
 
 // Memory is a store that lives only as long as the process.
 type Memory struct {
-	mu      sync.Mutex
-	closed  bool
-	nextID  int64
-	entries []LogEntry // in insertion order, so IDs ascend
-	cursors map[string]Cursor
-	metrics []MetricSample // in insertion order
-	rollups map[rollupKey]rollupRow
+	mu        sync.Mutex
+	closed    bool
+	nextID    int64
+	entries   []LogEntry // in insertion order, so IDs ascend
+	cursors   map[string]Cursor
+	metrics   []MetricSample // in insertion order
+	rollups   map[rollupKey]rollupRow
+	revisions []Revision // in insertion order, so the number is the index plus one
 }
 
 // NewMemory returns an empty in-memory store.
