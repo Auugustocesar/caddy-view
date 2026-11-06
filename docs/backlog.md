@@ -19,9 +19,9 @@ day, M a few days, L about a week.
 | | **B4** one apply at a time across processes (done) | M |
 | Phase 4, slice 4a | **B5** a system status API, before any UI that shows it | M |
 | Phase 4 design | **B6** the options of a site, decided before the wizard | S (a decision, then code) |
-| Phase 5 | **B7** a health route and a `healthcheck` command for Docker | S |
-| | **B8** `doctor` checks permissions (its relative-import check is done in B1) | S |
-| Phase 5, release | Rewrite the README for an open source audience (see "Decided not to do") | M |
+| Phase 5 | **B7** a health route and a `healthcheck` command for Docker (done, slice 5d) | S |
+| | **B8** `doctor` checks permissions (its relative-import check is done in B1; the rest, slice 5d, done) | S |
+| Phase 5, release | Rewrite the README for an open source audience (done, slice 5f; screenshots still to add) | M |
 
 Slice 3f comes before phase 4 on purpose: B1 to B4 are about the promise of phase 3, that Caddy is never left broken,
 and the interface of phase 4 should be built on an apply flow that has them.

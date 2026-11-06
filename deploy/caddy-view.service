@@ -1,0 +1,46 @@
+# Install: copy the binary to /usr/local/bin, this file to /etc/systemd/system, then
+#   useradd --system --no-create-home --shell /usr/sbin/nologin --gid caddy caddy-view
+#   systemctl daemon-reload && systemctl enable --now caddy-view
+#   journalctl -u caddy-view | grep password      # the first password, shown once
+#
+# The user is in Caddy's group so that it can use the Admin API socket and read the access log. In the Caddyfile:
+#   admin unix//run/caddy/admin.sock|0660
+#   log { output file /var/log/caddy/access.log { mode 0640 } format json }
+# and /etc/caddy must be writable by that group, for --allow-edit. Remove --caddyfile and --allow-edit for a read-only UI.
+
+[Unit]
+Description=caddy-view, a web UI for Caddy
+After=network-online.target caddy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=caddy-view
+Group=caddy
+StateDirectory=caddy-view
+ExecStart=/usr/local/bin/caddy-view serve \
+    --admin unix:///run/caddy/admin.sock \
+    --data-dir /var/lib/caddy-view \
+    --caddyfile /etc/caddy/Caddyfile \
+    --allow-edit
+Restart=on-failure
+RestartSec=5
+
+# It needs the network only to be reached, and files only in its own state and in /etc/caddy.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+ReadWritePaths=/etc/caddy
+
+[Install]
+WantedBy=multi-user.target

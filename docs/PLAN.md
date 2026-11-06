@@ -3,10 +3,10 @@
 A lightweight web UI that runs next to [Caddy](https://caddyserver.com): see status, metrics and logs, edit the
 Caddyfile safely, and manage reverse proxies.
 
-Status: phases 0 to 3 are done on the backend: the Admin API client, `doctor`, the read-only UI, the history store
-(log ingestion, metrics, rollups, retention) with its API, and editing the Caddyfile through the API with revisions and
-rollback, hardened by slice 3f (relative imports refused, crash recovery, verification after load, one editor per
-Caddyfile; `docs/backlog.md`). The interface for history and editing, the sites wizard and the rest are phase 4 and 5.
+Status: every phase is built. The Admin API client, `doctor`, the history store (log ingestion, metrics, rollups,
+retention), editing the Caddyfile through the API with revisions and rollback (hardened by slice 3f), the whole
+interface (phase 4: dashboard, metrics, logs, Caddyfile editor, managed sites), and login, the Docker image and the
+release builds (phase 5, `docs/phase-5.md`). What is left is the first release and the screenshots for the README.
 This document is the source of truth for scope and design; update it when a decision changes.
 
 ## 1. Scope
@@ -47,10 +47,10 @@ Internal packages:
 | `internal/store` | SQLite storage (`SQLite`, and `Memory` for tests and `--no-persist`) with one shared contract suite |
 | `internal/configmgr` | Revisions, validate/apply/rollback state machine |
 | `internal/doctor`, `internal/redact`, `internal/logtail`, `internal/cfgpath`, `internal/netutil` | The `doctor` checks, secret redaction, the live log tail and small shared helpers |
-| `internal/auth` | Users, sessions, rate limiting (phase 5, not written yet) |
+| `internal/auth` | Password hashing (argon2id), login, sessions and the brake on failed logins |
 | `internal/server` | HTTP API, SSE |
 | `internal/web` | Embedded SPA handler |
-| `cmd/caddy-view` | CLI: `serve`, `doctor`; `reset-password` and `healthcheck` come in phase 5 |
+| `internal/cli`, `cmd/caddy-view` | CLI: `serve`, `doctor`, `reset-password`, `healthcheck`, `version` |
 | `web/` | Svelte + Vite frontend (built into `internal/web/dist`) |
 
 ## 3. How it talks to Caddy
@@ -90,7 +90,7 @@ tells the user what is missing.
 
 | Table | Contents |
 |---|---|
-| `users`, `sessions` | Argon2 password hash; sessions store only a token hash, `expires_at`, `last_seen_at` |
+| `users`, `sessions` | argon2id password hash (a PHC string, so its parameters can be raised later); sessions store only the SHA-256 of the token, `created_at`, `last_seen_at`, `expires_at` |
 | `sites` | User intent: hostname (unique), upstreams, tls, enabled, options (JSON). Allows regenerating `caddy-view-sites.caddy` |
 | `config_revisions` | Unique number, content, sha256, trigger (`manual-edit`, `site-change`, `rollback`), status, error |
 | `access_log_entries` | ts, host, method, path, status, duration, bytes (indexes on time, host, status) |
@@ -157,18 +157,27 @@ Stack: Svelte + Vite (Tailwind later, if the UI needs it), CodeMirror 6 for the 
 
 ## 9. Security
 
-- Listen on `127.0.0.1` by default; LAN requires explicit `--listen`.
-- Initial password generated on first start and printed once in the log; `caddy-view reset-password` to reset.
-- httpOnly + SameSite cookies, CSRF protection, login rate limit. Clear warning on plain HTTP
-  (`--allow-insecure-http`).
+Decided and built in phase 5; the reasons are in `docs/phase-5.md`.
+
+- Listen on `127.0.0.1` by default. An address that others can reach needs the login (so `--no-auth` is refused there)
+  and `--allow-insecure-http`, because caddy-view speaks plain HTTP; the expected setup is a Caddy site over TLS in front.
+- The `Host` check (DNS rebinding) accepts loopback names, each `--allowed-host`, and the host of `--listen`.
+- Login required, always, unless `--no-auth` on a loopback address. One user, `admin`; its random password is created
+  and printed once at the first start; `caddy-view reset-password` sets a new one and ends its sessions.
+- argon2id hashes. A session is a random token in an `HttpOnly`, `SameSite=Strict` cookie (`Secure` over TLS, or always
+  with `--secure-cookie`); only its SHA-256 is stored; 7 days at most, 24 hours idle.
+- CSRF: `SameSite=Strict`, plus `Origin` must match `Host` and the body must be `application/json`. No token to carry.
+- 5 failed logins per client address in 15 minutes hold it back (429). The address is the connection's, never a header.
 - Read-only by default; editing requires `--allow-edit`.
-- Docker: non-root user, least-privilege socket permissions, port 2019 never published.
+- Docker: non-root user, port 2019 never published, the Admin API on a socket in a volume only the two containers share.
 
 ## 10. Distribution
 
-- Binaries for linux and macOS, amd64 and arm64, via GoReleaser, plus an example systemd unit.
-- Small multi-arch Docker image and `docker-compose.example.yml` (Caddyfile, `conf.d`, logs, socket and `/data`
-  volumes).
+- Binaries for Linux and macOS, amd64 and arm64, with checksums, by GoReleaser (`.goreleaser.yaml`), plus a hardened
+  systemd unit (`deploy/caddy-view.service`).
+- A multi-arch image on `ghcr.io` (distroless, non-root, a `HEALTHCHECK` that calls `caddy-view healthcheck`) and
+  `docker-compose.example.yml` with its Caddyfile (`deploy/Caddyfile.example`).
+- One workflow (`.github/workflows/release.yml`) on a `v*` tag: tests, then the binaries and the image.
 - Test environment: a Caddy LXC in the author's homelab.
 
 ## 11. Development workflow: tests first
@@ -197,9 +206,8 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 | 3 | Caddyfile edit, validate, apply, rollback (API; slices 3a to 3e done) | An invalid config never leaves Caddy broken |
 | 3f | Hardening of the apply flow, done: refuse relative imports, crash recovery, verify after load, one apply across processes (`docs/backlog.md`, B1 to B4) | Each has a failing test first and a real-Caddy check where it applies |
 | 4 | Sites wizard, rollup charts, and the whole front end for history and editing (Caddyfile tab, log search tab, dashboard summary, design pass); proposal in `docs/phase-4.md` | Creating a reverse proxy from the UI works |
-| 5 | Full login, release, Docker, docs | Fresh-machine install takes minutes |
+| 5 | Full login, release, Docker, docs; built in slices 5a to 5f (`docs/phase-5.md`) | Fresh-machine install takes minutes |
 
-MVP is phases 0 to 3, but the editing of phase 3 has no interface until phase 4: today it is used through the API.
 Everything found by comparing with the reference project that is not in these phases is in `docs/backlog.md`, with the
 phase it goes to. CI runs gofmt, vet, golangci-lint (which includes staticcheck) and govulncheck, and the tests with `-race` on Linux, macOS and
 Windows, plus integration tests against a real Caddy.
@@ -223,5 +231,6 @@ Windows, plus integration tests against a real Caddy.
 | Postgres | Out of scope; the `Store` interface keeps the door open |
 | Config backup | User-selectable: `full` or `sites-only` (section 5) |
 | Certificates | Caddy obtains, renews and validates them itself; the UI does not show their expiry in v1 (`docs/backlog.md`) |
-| README | Kept up to date by hand until the first release, when it is rewritten for open source readers (`docs/backlog.md`) |
+| README | Rewritten for open source readers with the first release: a quick start first, the reference after. Screenshots are still to be added |
+| Login | argon2id, one `admin` user, cookie sessions with only their hash stored, no CSRF token (`docs/phase-5.md`) |
 | Reference project | [caddy-visualizer](https://github.com/dree007/caddy-visualizer), a source of good practices, not copied; the comparison and what came out of it is `docs/backlog.md` |

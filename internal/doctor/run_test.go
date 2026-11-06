@@ -30,6 +30,15 @@ func goodFetcher(t *testing.T) fakeFetcher {
 	return fakeFetcher{cfg: mustConfig(t, goodConfig)}
 }
 
+// goodFetcherWithLog is goodFetcher for a Caddy that writes its JSON access log to file.
+func goodFetcherWithLog(t *testing.T, file string) fakeFetcher {
+	t.Helper()
+	cfg := mustConfig(t, goodConfig)
+	logs := cfg["logging"].(map[string]any)["logs"].(map[string]any)
+	logs["log0"].(map[string]any)["writer"].(map[string]any)["filename"] = file
+	return fakeFetcher{cfg: cfg}
+}
+
 func writeCaddyfile(t *testing.T, content string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "Caddyfile")
@@ -65,10 +74,17 @@ func TestRunAllGood(t *testing.T) {
 	if err := os.WriteFile(path, []byte("import "+filepath.ToSlash(dir)+"/conf.d/*.caddy\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{Admin: "unix:///run/caddy/admin.sock", CaddyfilePath: path}
-	results := Run(context.Background(), opts, goodFetcher(t))
+	logFile := filepath.Join(dir, "access.log")
+	if err := os.WriteFile(logFile, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(shortDir(t), "admin.sock")
+	listenUnix(t, sock, false)
+	opts := Options{Admin: "unix://" + sock, CaddyfilePath: path}
+	results := Run(context.Background(), opts, goodFetcherWithLog(t, logFile))
 
-	want := []string{"admin-transport", "admin-reachable", "metrics", "access-log", "caddyfile", "import", "relative-import"}
+	want := []string{"admin-transport", "admin-socket", "admin-reachable", "metrics", "access-log", "access-log-readable",
+		"caddyfile", "import", "relative-import", "caddyfile-writable"}
 	if got := ids(results); !reflect.DeepEqual(got, want) {
 		t.Fatalf("result IDs = %v, want %v", got, want)
 	}
@@ -79,9 +95,18 @@ func TestRunAllGood(t *testing.T) {
 	}
 }
 
+func TestRunChecksTheAccessLogGivenByTheUserInsteadOfTheConfigs(t *testing.T) {
+	given := filepath.Join(t.TempDir(), "mine.log")
+	if err := os.WriteFile(given, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	results := Run(context.Background(), Options{Admin: "localhost:2019", AccessLogPath: given}, goodFetcher(t))
+	assertStatus(t, byID(t, results, "access-log-readable"), StatusOK)
+}
+
 func TestRunWithoutCaddyfilePathSkipsCaddyfileChecks(t *testing.T) {
 	results := Run(context.Background(), Options{Admin: "localhost:2019"}, goodFetcher(t))
-	want := []string{"admin-transport", "admin-reachable", "metrics", "access-log"}
+	want := []string{"admin-transport", "admin-reachable", "metrics", "access-log", "access-log-readable"}
 	if got := ids(results); !reflect.DeepEqual(got, want) {
 		t.Fatalf("result IDs = %v, want %v", got, want)
 	}
@@ -95,7 +120,7 @@ func TestRunUnreachableSkipsConfigChecks(t *testing.T) {
 	}
 	results := Run(context.Background(), opts, fetcher)
 
-	want := []string{"admin-transport", "admin-reachable", "caddyfile", "import", "relative-import"}
+	want := []string{"admin-transport", "admin-reachable", "caddyfile", "import", "relative-import", "caddyfile-writable"}
 	if got := ids(results); !reflect.DeepEqual(got, want) {
 		t.Fatalf("result IDs = %v, want %v (config checks must not run without a config)", got, want)
 	}

@@ -125,6 +125,24 @@ describe('LogStream', () => {
       expect(onChange).toHaveBeenCalled()
     })
 
+    it('tells the caller when the server says the session is gone, because the stream cannot do that by itself', async () => {
+      const onUnauthorized = vi.fn()
+      const fetchImpl = vi.fn().mockResolvedValue(json(401, { error: 'login required' }))
+      const { stream, es } = setup({ fetchImpl, onUnauthorized })
+      es.fail(FakeEventSource.CLOSED)
+      await vi.waitFor(() => expect(onUnauthorized).toHaveBeenCalledOnce())
+      expect(stream.status).toBe('unavailable')
+    })
+
+    it('does not call it for other answers', async () => {
+      const onUnauthorized = vi.fn()
+      const fetchImpl = vi.fn().mockResolvedValue(json(404, { error: 'no access log' }))
+      const { stream, es } = setup({ fetchImpl, onUnauthorized })
+      es.fail(FakeEventSource.CLOSED)
+      await vi.waitFor(() => expect(stream.status).toBe('unavailable'))
+      expect(onUnauthorized).not.toHaveBeenCalled()
+    })
+
     it('uses a generic reason when the server cannot be asked', async () => {
       const fetchImpl = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
       const { stream, es } = setup({ fetchImpl })

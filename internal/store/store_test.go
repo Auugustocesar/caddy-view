@@ -362,6 +362,16 @@ func TestSQLiteKeepsRevisionsAcrossAReopen(t *testing.T) {
 	}
 }
 
+// dropAuthTables removes the users and sessions tables, which a database from before login does not have.
+func dropAuthTables(t *testing.T, raw *sql.DB) {
+	t.Helper()
+	for _, table := range []string{"sessions", "users"} { // sessions first: it refers to users
+		if _, err := raw.ExecContext(context.Background(), "DROP TABLE IF EXISTS "+table); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestSQLiteAddsRevisionsToAVersion3Database(t *testing.T) {
 	path := dbPath(t)
 	ctx := context.Background()
@@ -372,6 +382,7 @@ func TestSQLiteAddsRevisionsToAVersion3Database(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropAuthTables(t, raw)                                        // they came with a later migration, which runs again
 	for _, table := range []string{"config_revisions", "sites"} { // sites came with a later migration, which runs again
 		if _, err := raw.ExecContext(ctx, "DROP TABLE IF EXISTS "+table); err != nil {
 			t.Fatal(err)
@@ -399,6 +410,43 @@ func TestMemoryStoreMeetsTheSitesContract(t *testing.T) {
 
 func TestSQLiteStoreMeetsTheSitesContract(t *testing.T) {
 	storetest.RunSites(t, func(t *testing.T) storetest.SiteStore { return openForContract(t) })
+}
+
+func TestMemoryStoreMeetsTheAuthContract(t *testing.T) {
+	storetest.RunAuth(t, func(t *testing.T) storetest.AuthStore { return store.NewMemory() })
+}
+
+func TestSQLiteStoreMeetsTheAuthContract(t *testing.T) {
+	storetest.RunAuth(t, func(t *testing.T) storetest.AuthStore { return openForContract(t) })
+}
+
+func TestSQLiteKeepsUsersAndSessionsAcrossAReopen(t *testing.T) {
+	path := dbPath(t)
+	ctx := context.Background()
+	first := open(t, path)
+	u, err := first.SaveUser(ctx, store.User{Username: "admin", PasswordHash: "h", CreatedAt: base})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := store.Session{TokenHash: "t", UserID: u.ID, CreatedAt: base, LastSeenAt: base, ExpiresAt: base.Add(time.Hour)}
+	if err := first.AddSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	second := open(t, path)
+	if got, err := second.UserByName(ctx, "admin"); err != nil || got.ID != u.ID || got.PasswordHash != "h" {
+		t.Errorf("user after a reopen = %+v, %v", got, err)
+	}
+	if got, err := second.Session(ctx, "t"); err != nil || got.UserID != u.ID {
+		t.Errorf("session after a reopen = %+v, %v", got, err)
+	}
+	// Foreign keys must hold on the reopened connection too: deleting nothing here, but a session for no user is refused.
+	if err := second.AddSession(ctx, store.Session{TokenHash: "x", UserID: u.ID + 1, ExpiresAt: base}); !errors.Is(err, store.ErrInvalidSession) {
+		t.Errorf("a session for a missing user = %v, want ErrInvalidSession", err)
+	}
 }
 
 func TestSQLiteKeepsSitesAcrossAReopen(t *testing.T) {
@@ -430,6 +478,7 @@ func TestSQLiteAddsSitesToAVersion4Database(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropAuthTables(t, raw) // they came with a later migration, which runs again
 	if _, err := raw.ExecContext(ctx, "DROP TABLE IF EXISTS sites"); err != nil {
 		t.Fatal(err)
 	}
@@ -473,6 +522,7 @@ func TestAnUpgradeFromTheSchemaWithoutPasswordsKeepsTheSites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dropAuthTables(t, raw) // they came with a later migration, which runs again
 	for _, column := range []string{"basic_auth_user", "basic_auth_hash"} {
 		var has int
 		if err := raw.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('sites') WHERE name = ?", column).Scan(&has); err != nil {

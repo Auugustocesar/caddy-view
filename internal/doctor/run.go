@@ -25,6 +25,9 @@ type Options struct {
 	Admin string
 	// CaddyfilePath enables the Caddyfile checks when set.
 	CaddyfilePath string
+	// AccessLogPath is the access log as caddy-view sees it, as given to serve with --access-log. When empty, the file of
+	// the first JSON file logger of Caddy's configuration is checked.
+	AccessLogPath string
 	// ManagedFile is the managed file path relative to the Caddyfile directory. Defaults to DefaultManagedFile.
 	ManagedFile string
 }
@@ -32,8 +35,12 @@ type Options struct {
 // Run executes every check that applies and returns the results in a stable order.
 func Run(ctx context.Context, opts Options, f Fetcher) []Result {
 	results := []Result{CheckAdminTransport(opts.Admin)}
+	if r := CheckAdminSocket(opts.Admin); r.ID != "" {
+		results = append(results, r)
+	}
 
 	cfg, err := f.Config(ctx)
+	logFile := opts.AccessLogPath
 	switch {
 	case err == nil:
 		results = append(results,
@@ -41,6 +48,9 @@ func Run(ctx context.Context, opts Options, f Fetcher) []Result {
 			CheckMetrics(Config(cfg)),
 			CheckAccessLog(Config(cfg)),
 		)
+		if logFile == "" {
+			logFile = accessLogFile(Config(cfg))
+		}
 	case errors.Is(err, caddy.ErrUnreachable):
 		results = append(results, Result{
 			ID:      "admin-reachable",
@@ -55,6 +65,10 @@ func Run(ctx context.Context, opts Options, f Fetcher) []Result {
 			Message: fmt.Sprintf("the Admin API request failed: %v", err),
 			Hint:    "Check the Caddy logs and that --admin points to the Caddy Admin API.",
 		})
+	}
+
+	if logFile != "" {
+		results = append(results, CheckAccessLogReadable(logFile))
 	}
 
 	if opts.CaddyfilePath != "" {
@@ -81,6 +95,7 @@ func checkCaddyfile(opts Options) []Result {
 		{ID: "caddyfile", Status: StatusOK, Message: fmt.Sprintf("read %s", opts.CaddyfilePath)},
 		CheckImport(string(data), filepath.Dir(opts.CaddyfilePath), managed),
 		CheckRelativeImports(string(data), opts.CaddyfilePath),
+		CheckCaddyfileWritable(opts.CaddyfilePath),
 	}
 }
 

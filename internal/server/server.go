@@ -47,6 +47,15 @@ type Options struct {
 	History History
 	// Sites serves the managed sites routes, which change Caddy. When nil, those routes are a 404.
 	Sites SiteManager
+	// AllowedHosts are the Host names accepted besides this machine's own, such as the name of the Caddy site in front of
+	// caddy-view. Anything else is refused, which blocks DNS rebinding. Names are compared without case and without port.
+	AllowedHosts []string
+	// SecureCookie marks the session cookie Secure even when the request came over plain HTTP, for caddy-view behind a proxy
+	// that ends TLS. Without it the cookie is Secure only when the request itself came over TLS.
+	SecureCookie bool
+	// Auth turns login on: every route of the API but login and logout then needs a session. When nil, there is no login
+	// and no session is asked for.
+	Auth Authenticator
 	// Editor serves the Caddyfile and revision routes, which change Caddy. When nil, those routes are a 404.
 	Editor Editor
 	// Ingest, Scrape and Database feed /api/system; each one that is nil leaves its section out.
@@ -73,9 +82,10 @@ type Options struct {
 }
 
 type api struct {
-	caddy Caddy
-	opts  Options
-	log   *slog.Logger
+	allowed map[string]bool // AllowedHosts, lower case
+	caddy   Caddy
+	opts    Options
+	log     *slog.Logger
 	// streams holds one token per open log stream.
 	streams chan struct{}
 }
@@ -93,7 +103,7 @@ func (a *api) backupMode() string {
 
 var errNoAccessLog = errors.New("no access log found: configure a JSON file logger in Caddy or pass --access-log")
 
-// New returns the API handler, only for loopback Host names. It is read-only: it serves GET, and POST only on the
+// New returns the API handler, for loopback Host names and Options.AllowedHosts. It is read-only: it serves GET, and POST only on the
 // Caddyfile and revision routes that exist when Options.Editor is set.
 func New(c Caddy, opts Options) http.Handler {
 	log := opts.Logger
@@ -104,13 +114,17 @@ func New(c Caddy, opts Options) http.Handler {
 	if maxStreams <= 0 {
 		maxStreams = defaultMaxStreams
 	}
-	a := &api{caddy: c, opts: opts, log: log, streams: make(chan struct{}, maxStreams)}
+	a := &api{caddy: c, opts: opts, log: log, streams: make(chan struct{}, maxStreams), allowed: make(map[string]bool, len(opts.AllowedHosts))}
+	for _, h := range opts.AllowedHosts {
+		a.allowed[strings.ToLower(h)] = true
+	}
 	routes := map[string]route{
 		"/api/status":      onGet(a.status),
 		"/api/config":      onGet(a.config),
 		"/api/sites":       onGet(a.sites),
 		"/api/logs/stream": onGet(a.logStream),
 		"/api/system":      onGet(a.system),
+		"/api/health":      onGet(a.health),
 	}
 	if opts.History != nil {
 		routes["/api/logs"] = onGet(a.logs)
@@ -134,8 +148,13 @@ func New(c Caddy, opts Options) http.Handler {
 		}
 		routes["/api/revisions"] = onGet(a.revisions)
 	}
+	if opts.Auth != nil {
+		routes["/api/login"] = onPost(a.login)
+		routes["/api/logout"] = onPost(a.logout)
+		routes["/api/me"] = onGet(a.me)
+	}
 	return a.logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !loopbackHost(r.Host) {
+		if !a.hostAllowed(r.Host) {
 			a.log.Warn("request rejected: host not allowed", "host", r.Host, "method", r.Method, "path", r.URL.Path)
 			setAPIHeaders(w)
 			writeError(w, http.StatusForbidden, "host not allowed")
@@ -147,6 +166,12 @@ func New(c Caddy, opts Options) http.Handler {
 		}
 
 		setAPIHeaders(w)
+		if opts.Auth != nil && !opensWithoutSession(r.URL.Path) {
+			var allowed bool
+			if r, allowed = a.requireSession(w, r); !allowed {
+				return
+			}
+		}
 		rt, ok := routes[r.URL.Path]
 		if !ok && opts.Editor != nil {
 			rt, ok = a.revisionRoute(r.URL.Path)
@@ -237,14 +262,14 @@ func (s *statusRecorder) WriteHeader(code int) {
 // Unwrap lets http.ResponseController reach the underlying writer, for example to flush a stream.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
-// loopbackHost reports whether a Host header names this machine. Anything else is refused, which blocks DNS
-// rebinding: a page on another origin reaching the API through a hostname it controls.
-func loopbackHost(hostport string) bool {
+// hostAllowed reports whether a Host header names this machine or one of Options.AllowedHosts. Anything else is
+// refused, which blocks DNS rebinding: a page on another origin reaching the API through a hostname it controls.
+func (a *api) hostAllowed(hostport string) bool {
 	host := hostport
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
 	}
-	return netutil.IsLoopbackHost(host)
+	return netutil.IsLoopbackHost(host) || a.allowed[strings.ToLower(host)]
 }
 
 func (a *api) status(w http.ResponseWriter, r *http.Request) {

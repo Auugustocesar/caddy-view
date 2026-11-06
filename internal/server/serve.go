@@ -23,24 +23,34 @@ var ErrInvalidListen = errors.New("invalid listen address")
 // ErrNotLoopback means a listen address is well formed but does not name this machine.
 var ErrNotLoopback = errors.New("listen address is not a loopback address")
 
-// ValidateListen accepts only a loopback host with a port, such as 127.0.0.1:8484, localhost:8484 or [::1]:8484.
-// Until the UI has authentication, listening on any other address would expose the Caddy configuration.
+// ValidateListen checks the syntax of a listen address: a host, which may be empty, and a port that is a number from 0
+// to 65535, such as 127.0.0.1:8484, :8484 or [::1]:8484. Whether the address may be one that others can reach is
+// RequireLoopback's question, and depends on whether there is a login.
 func ValidateListen(addr string) error {
-	host, port, err := net.SplitHostPort(addr)
+	_, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return fmt.Errorf("%w %q: %w", ErrInvalidListen, addr, err)
 	}
 	if n, err := strconv.Atoi(port); err != nil || n < 0 || n > 65535 {
 		return fmt.Errorf("%w %q: port %q must be a number from 0 to 65535", ErrInvalidListen, addr, port)
 	}
+	return nil
+}
+
+// RequireLoopback accepts only a loopback host with a port, such as 127.0.0.1:8484, localhost:8484 or [::1]:8484. A
+// malformed address is ErrInvalidListen, and a well formed one that is not loopback is ErrNotLoopback.
+func RequireLoopback(addr string) error {
+	if err := ValidateListen(addr); err != nil {
+		return err
+	}
+	host, _, _ := net.SplitHostPort(addr) // ValidateListen has checked it
 	if !netutil.IsLoopbackHost(host) {
-		return fmt.Errorf("%w: %q (caddy-view has no authentication yet, so it only listens on 127.0.0.1, "+
-			"localhost or [::1]; use an SSH tunnel to reach it from another machine)", ErrNotLoopback, addr)
+		return fmt.Errorf("%w: %q", ErrNotLoopback, addr)
 	}
 	return nil
 }
 
-// Serve listens on addr (which must pass ValidateListen), serves h, and returns nil after a graceful shutdown
+// Serve listens on addr (which must pass ValidateListen; the caller decides whether it may be reachable by others), serves h, and returns nil after a graceful shutdown
 // triggered by ctx. Requests in flight are allowed to finish, except long-lived ones, whose context is cancelled.
 // onListen, when not nil, receives the bound address once the listener is ready, which matters when the port is 0.
 func Serve(ctx context.Context, addr string, h http.Handler, onListen func(net.Addr)) error {

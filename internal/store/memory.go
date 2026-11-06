@@ -20,11 +20,13 @@ type Memory struct {
 	rollups   map[rollupKey]rollupRow
 	revisions []Revision // in insertion order, so the number is the index plus one
 	sites     []Site
+	users     []User // in insertion order, so the ID is the index plus one
+	sessions  map[string]Session
 }
 
 // NewMemory returns an empty in-memory store.
 func NewMemory() *Memory {
-	return &Memory{nextID: 1, cursors: make(map[string]Cursor), rollups: make(map[rollupKey]rollupRow)}
+	return &Memory{nextID: 1, cursors: make(map[string]Cursor), rollups: make(map[rollupKey]rollupRow), sessions: make(map[string]Session)}
 }
 
 // AppendLog stores the entries and the cursor atomically.

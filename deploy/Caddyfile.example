@@ -1,0 +1,24 @@
+# The Caddyfile that docker-compose.example.yml and caddy-view's doctor expect. Copy it to ./caddy/Caddyfile.
+{
+	# The Admin API on a unix socket in a volume that only the two containers share, so port 2019 is never published.
+	# The mode lets caddy-view, which does not run as root, connect to it.
+	admin unix//run/caddy/admin.sock|0666
+
+	# caddy-view reads Caddy's metrics through the Admin API.
+	metrics
+}
+
+# Sites made in caddy-view are written to conf.d. The path must be written in full: caddy-view sends changes to Caddy
+# as text, and Caddy resolves a relative import from its own working directory, which would drop these sites.
+import /etc/caddy/conf.d/*.caddy
+
+# A site of your own, with the access log that caddy-view reads. The mode lets caddy-view read the file.
+example.com {
+	log {
+		output file /var/log/caddy/access.log {
+			mode 0644
+		}
+		format json
+	}
+	respond "Hello"
+}

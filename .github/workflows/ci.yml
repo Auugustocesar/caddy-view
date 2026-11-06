@@ -101,6 +101,30 @@ jobs:
           git add --intent-to-add internal/web/dist
           git diff --exit-code -- internal/web/dist
 
+  docker:
+    name: Docker image builds and runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: build
+        run: docker build --build-arg VERSION=ci -t caddy-view:ci .
+
+      - name: it starts, and says its version
+        run: docker run --rm caddy-view:ci version
+
+      # The container's own probe: it must pass against a running caddy-view, with no login. There is no Caddy here, which
+      # serve survives (it only reports that Caddy is unreachable).
+      - name: the health check passes
+        run: |
+          docker run -d --name cv caddy-view:ci
+          for i in $(seq 1 20); do
+            if docker exec cv caddy-view healthcheck; then exit 0; fi
+            sleep 1
+          done
+          docker logs cv
+          exit 1
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

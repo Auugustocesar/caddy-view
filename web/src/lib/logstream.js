@@ -20,6 +20,7 @@ export class LogStream {
   #url
   #max
   #onChange
+  #onUnauthorized
   #EventSource
   #fetch
   /** @type {EventSource|null} */
@@ -30,12 +31,14 @@ export class LogStream {
 
   /**
    * @param {string} url
-   * @param {{max?: number, onChange?: () => void, EventSourceImpl?: typeof EventSource, fetchImpl?: typeof fetch}} [options]
+   * @param {{max?: number, onChange?: () => void, onUnauthorized?: () => void, EventSourceImpl?: typeof EventSource, fetchImpl?: typeof fetch}} [options]
    */
   constructor(url, options = {}) {
     this.#url = url
     this.#max = options.max ?? DEFAULT_MAX
     this.#onChange = options.onChange ?? (() => {})
+    // An EventSource cannot see a 401, so the stream asks the server once it has given up, and reports it here.
+    this.#onUnauthorized = options.onUnauthorized ?? (() => {})
     this.#EventSource = options.EventSourceImpl ?? globalThis.EventSource
     this.#fetch = options.fetchImpl ?? globalThis.fetch
   }
@@ -134,6 +137,7 @@ export class LogStream {
         await res.body?.cancel()
         return 'the log stream was closed'
       }
+      if (res.status === 401) this.#onUnauthorized()
       const body = await res.json().catch(() => null)
       return typeof body?.error === 'string' ? body.error : `the server answered HTTP ${res.status}`
     } catch {

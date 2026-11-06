@@ -1,0 +1,53 @@
+# Caddy and caddy-view side by side. Copy this file to docker-compose.yml, and deploy/Caddyfile.example to
+# ./caddy/Caddyfile, then:
+#
+#   mkdir -p caddy/conf.d && sudo chown -R 65532:65532 caddy      # caddy-view runs as 65532 and writes there
+#   docker compose up -d
+#   docker compose logs caddy-view | grep password                # the first password, shown once
+#
+# then open http://localhost:8484 and sign in as admin. To reset the password later:
+#   docker compose exec caddy-view caddy-view reset-password --data-dir /data
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      # Port 2019, the Admin API, is not published: it has no authentication. caddy-view reaches it by the socket.
+    volumes:
+      - ./caddy:/etc/caddy # the Caddyfile and conf.d/, which caddy-view edits
+      - caddy-run:/run/caddy # the Admin API socket
+      - caddy-logs:/var/log/caddy # the access log
+      - caddy-data:/data # Caddy's certificates
+
+  caddy-view:
+    image: ghcr.io/auugustocesar/caddy-view:latest
+    restart: unless-stopped
+    depends_on:
+      - caddy
+    ports:
+      # The loopback of the host only. To serve the UI to others, put it behind a Caddy site over TLS, add that site's
+      # name with --allowed-host and add --secure-cookie, rather than publishing this port.
+      - "127.0.0.1:8484:8484"
+    volumes:
+      - ./caddy:/etc/caddy # the Caddyfile to edit, and where the lock is kept
+      - caddy-run:/run/caddy
+      - caddy-logs:/var/log/caddy:ro
+      - caddy-view-data:/data # the history and the users
+    command:
+      - serve
+      - --listen=0.0.0.0:8484
+      - --allow-insecure-http
+      - --data-dir=/data
+      - --admin=unix:///run/caddy/admin.sock
+      - --caddyfile=/etc/caddy/Caddyfile
+      - --allow-edit
+      # - --backup-mode=sites-only # never write the Caddyfile: only the sites made in caddy-view
+
+volumes:
+  caddy-run:
+  caddy-logs:
+  caddy-data:
+  caddy-view-data:

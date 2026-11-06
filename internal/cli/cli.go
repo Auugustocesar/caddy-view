@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Auugustocesar/caddy-view/internal/auth"
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/configmgr"
 	"github.com/Auugustocesar/caddy-view/internal/doctor"
@@ -30,9 +31,12 @@ import (
 const usage = `Usage: caddy-view <command> [flags]
 
 Commands:
-  serve    Run the read-only web UI and API
-  doctor   Check that Caddy is set up for caddy-view
-  help     Show this help
+  serve            Run the web UI and API
+  doctor           Check that Caddy is set up for caddy-view
+  reset-password   Set a new random password for the UI login and end its sessions
+  healthcheck      Ask a running caddy-view whether it is healthy, for a Docker HEALTHCHECK
+  version          Show the version
+  help             Show this help
 `
 
 const (
@@ -55,6 +59,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDoctor(ctx, args[1:], stdout, stderr)
 	case "serve":
 		return runServe(ctx, args[1:], stdout, stderr)
+	case "version", "--version":
+		return runVersion(stdout)
+	case "healthcheck":
+		return runHealthcheck(ctx, args[1:], stdout, stderr)
+	case "reset-password":
+		return runResetPassword(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", args[0], usage)
 		return 2
@@ -67,6 +77,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	admin := fs.String("admin", defaultAdmin, "Caddy Admin API address (unix:///path or http://host:port)")
 	caddyfile := fs.String("caddyfile", "", "path to the Caddyfile, enables the Caddyfile checks")
 	managed := fs.String("managed-file", doctor.DefaultManagedFile, "file managed by caddy-view, relative to the Caddyfile directory")
+	accessLog := fs.String("access-log", "", "JSON access log as caddy-view sees it, to check that it is readable; default: the file in Caddy's configuration")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -82,7 +93,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	results := doctor.Run(ctx, doctor.Options{Admin: *admin, CaddyfilePath: *caddyfile, ManagedFile: *managed}, client)
+	results := doctor.Run(ctx, doctor.Options{Admin: *admin, CaddyfilePath: *caddyfile, ManagedFile: *managed, AccessLogPath: *accessLog}, client)
 	doctor.Format(stdout, results)
 	return doctor.ExitCode(results)
 }
@@ -94,6 +105,7 @@ type history interface {
 	scrape.Store
 	retain.Store
 	server.History
+	auth.Store
 	configmgr.RevisionStore
 	Revisions(ctx context.Context, q store.RevisionQuery) ([]store.Revision, error)
 	io.Closer
@@ -211,7 +223,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	admin := fs.String("admin", defaultAdmin, "Caddy Admin API address (unix:///path or http://host:port)")
-	listen := fs.String("listen", "127.0.0.1:8484", "address to listen on; loopback only until the UI has authentication")
+	listen := fs.String("listen", "127.0.0.1:8484", "address to listen on; beyond loopback it needs the login and --allow-insecure-http")
+	noAuth := fs.Bool("no-auth", false, "turn the login off; only accepted on a loopback --listen, since anyone who reaches the port could then change Caddy's configuration")
+	secureCookie := fs.Bool("secure-cookie", false, "always mark the session cookie Secure, for caddy-view behind a proxy that ends TLS (it sees plain HTTP, but the browser is on HTTPS); never use it when the browser reaches caddy-view over plain HTTP, which would then drop the cookie")
+	allowInsecureHTTP := fs.Bool("allow-insecure-http", false, "accept plain HTTP on an address that others can reach; the password and the session cookie then cross the network in clear text unless something in front adds TLS")
+	var allowedHostFlags []string
+	fs.Func("allowed-host", "a Host name to accept besides this machine's own, such as the name of the Caddy site in front of caddy-view; may be repeated", func(v string) error {
+		allowedHostFlags = append(allowedHostFlags, v)
+		return nil
+	})
 	showSecrets := fs.Bool("show-secrets", false, "do not redact passwords, tokens and other secrets in /api/config")
 	logLevel := fs.String("log-level", "info", "log verbosity: debug, info, warn or error")
 	accessLog := fs.String("access-log", "", "JSON access log file to stream; default: found from the Caddy configuration")
@@ -234,6 +254,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 
 	if err := server.ValidateListen(*listen); err != nil {
 		fmt.Fprintf(stderr, "invalid --listen: %v\n", err)
+		return 2
+	}
+	if err := checkListenFlags(*listen, *noAuth, *allowInsecureHTTP); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	hosts, err := allowedHosts(*listen, allowedHostFlags)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	var level slog.Level
@@ -284,11 +313,28 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		Endpoint:      client.Endpoint(),
 		ShowSecrets:   *showSecrets,
 		Logger:        logger,
+		AllowedHosts:  hosts,
+		SecureCookie:  *secureCookie,
 		AccessLogPath: *accessLog,
 		UI:            web.Handler(),
 		History:       hist,
 		Database:      databaseInfo{store: hist, file: dbFile},
 		Retention:     &server.Retention{Raw: policy.Raw, Rollups: policy.Rollups, MaxBytes: policy.MaxBytes},
+	}
+	if *noAuth {
+		logger.Warn("--no-auth is on: there is no login, so whoever can reach this address can use the UI and the API")
+	} else {
+		svc, stopLogin, err := startLogin(ctx, hist, stderr, logger)
+		if err != nil {
+			fmt.Fprintf(stderr, "serve: %v\n", err)
+			return 1
+		}
+		defer stopLogin()
+		opts.Auth = svc
+	}
+	if server.RequireLoopback(*listen) != nil {
+		logger.Warn("listening on an address that others can reach over plain HTTP (--allow-insecure-http): the password and "+
+			"the session cookie cross the network in clear text unless something in front adds TLS", "listen", *listen)
 	}
 	ingestion := &ingestState{path: *accessLog}
 	scraper := scrape.New(client, hist, scrape.Options{Logger: logger})

@@ -1,0 +1,35 @@
+# Binaries for Linux and macOS, on amd64 and arm64. The Docker image is built by the release workflow, from the
+# Dockerfile. The web UI is committed in internal/web/dist, so nothing but Go is needed to build.
+version: 2
+project_name: caddy-view
+
+builds:
+  - id: caddy-view
+    main: ./cmd/caddy-view
+    binary: caddy-view
+    env:
+      - CGO_ENABLED=0 # the SQLite driver is pure Go
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/Auugustocesar/caddy-view/internal/cli.version={{ .Version }}
+
+archives:
+  - id: caddy-view
+    formats: [tar.gz]
+    name_template: "caddy-view_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - docker-compose.example.yml
+      - deploy/*
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge "

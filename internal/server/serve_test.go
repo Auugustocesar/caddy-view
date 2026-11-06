@@ -10,14 +10,11 @@ import (
 	"time"
 )
 
-func TestValidateListen(t *testing.T) {
+func TestValidateListenChecksOnlyTheSyntax(t *testing.T) {
 	accepted := []string{
-		"127.0.0.1:8484",
-		"localhost:8484",
-		"LOCALHOST:8484",
-		"[::1]:8484",
-		"127.0.0.1:0",
-		"127.1.2.3:80",
+		"127.0.0.1:8484", "localhost:8484", "[::1]:8484", "127.0.0.1:0",
+		// Not loopback: whether that is allowed is for the caller to decide, since it depends on login.
+		"0.0.0.0:8484", ":8484", "[::]:8484", "192.168.50.10:8484", "example.com:8484",
 	}
 	for _, addr := range accepted {
 		t.Run("accepts "+addr, func(t *testing.T) {
@@ -26,31 +23,6 @@ func TestValidateListen(t *testing.T) {
 			}
 		})
 	}
-
-	notLoopback := []string{
-		"0.0.0.0:8484",
-		":8484",
-		"[::]:8484",
-		"192.168.50.10:8484",
-		"example.com:8484",
-		"localhost.evil.com:8484",
-		"127.0.0.1.evil.com:8484",
-	}
-	for _, addr := range notLoopback {
-		t.Run("rejects "+addr, func(t *testing.T) {
-			err := ValidateListen(addr)
-			if err == nil {
-				t.Fatalf("ValidateListen(%q) = nil, want an error", addr)
-			}
-			if !errors.Is(err, ErrNotLoopback) {
-				t.Errorf("error %q is not ErrNotLoopback", err)
-			}
-			if errors.Is(err, ErrInvalidListen) {
-				t.Errorf("error %q is also ErrInvalidListen; a well-formed address must not be reported as malformed", err)
-			}
-		})
-	}
-
 	malformed := []string{"", "8484", "127.0.0.1", "127.0.0.1:99999", "127.0.0.1:abc", "127.0.0.1:-1"}
 	for _, addr := range malformed {
 		t.Run("rejects malformed "+addr, func(t *testing.T) {
@@ -61,8 +33,31 @@ func TestValidateListen(t *testing.T) {
 			if !errors.Is(err, ErrInvalidListen) {
 				t.Errorf("error %q is not ErrInvalidListen", err)
 			}
-			if errors.Is(err, ErrNotLoopback) {
-				t.Errorf("error %q is also ErrNotLoopback; a malformed address says nothing about loopback", err)
+		})
+	}
+}
+
+func TestRequireLoopback(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:8484", "localhost:8484", "LOCALHOST:8484", "[::1]:8484", "127.0.0.1:0", "127.1.2.3:80"} {
+		t.Run("accepts "+addr, func(t *testing.T) {
+			if err := RequireLoopback(addr); err != nil {
+				t.Errorf("RequireLoopback(%q) = %v, want nil", addr, err)
+			}
+		})
+	}
+	for _, addr := range []string{"0.0.0.0:8484", ":8484", "[::]:8484", "192.168.50.10:8484", "example.com:8484", "localhost.evil.com:8484", "127.0.0.1.evil.com:8484"} {
+		t.Run("rejects "+addr, func(t *testing.T) {
+			err := RequireLoopback(addr)
+			if !errors.Is(err, ErrNotLoopback) || errors.Is(err, ErrInvalidListen) {
+				t.Errorf("RequireLoopback(%q) = %v, want ErrNotLoopback only", addr, err)
+			}
+		})
+	}
+	for _, addr := range []string{"", "8484", "127.0.0.1"} {
+		t.Run("rejects malformed "+addr, func(t *testing.T) {
+			err := RequireLoopback(addr)
+			if !errors.Is(err, ErrInvalidListen) || errors.Is(err, ErrNotLoopback) {
+				t.Errorf("RequireLoopback(%q) = %v, want ErrInvalidListen only", addr, err)
 			}
 		})
 	}
@@ -171,11 +166,11 @@ func TestServeLetsRequestsInFlightFinish(t *testing.T) {
 	}
 }
 
-func TestServeRefusesNonLoopbackWithoutListening(t *testing.T) {
+func TestServeRefusesAMalformedAddressWithoutListening(t *testing.T) {
 	called := false
-	err := Serve(context.Background(), "0.0.0.0:0", http.NotFoundHandler(), func(net.Addr) { called = true })
-	if !errors.Is(err, ErrNotLoopback) {
-		t.Fatalf("Serve = %v, want ErrNotLoopback", err)
+	err := Serve(context.Background(), "no-port", http.NotFoundHandler(), func(net.Addr) { called = true })
+	if !errors.Is(err, ErrInvalidListen) {
+		t.Fatalf("Serve = %v, want ErrInvalidListen", err)
 	}
 	if called {
 		t.Error("onListen was called for an address that must be refused")

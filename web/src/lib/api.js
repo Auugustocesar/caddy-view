@@ -3,17 +3,40 @@
  * a refused change says about itself.
  */
 export class ApiError extends Error {
-  /** @param {string} message @param {number} status @param {{code?: string, line?: number, errors?: Array<object>, site?: object}} [details] */
+  /** @param {string} message @param {number} status @param {{retryAfter?: number, code?: string, line?: number, errors?: Array<object>, site?: object}} [details] */
   constructor(message, status, details = {}) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    // How long a held back login must wait, in seconds.
+    if (details.retryAfter !== undefined) this.retryAfter = details.retryAfter
     if (details.code !== undefined) this.code = details.code
     if (details.line !== undefined) this.line = details.line
     // The fields of a managed site that were refused, and the site Caddy rejected.
     if (details.errors !== undefined) this.errors = details.errors
     if (details.site !== undefined) this.site = details.site
   }
+}
+
+/** What is called when a route other than the session routes answers 401: the session is gone. */
+let unauthorizedHandler = null
+
+/** @param {(() => void)|null} handler */
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler
+}
+
+/** Says the session is gone, for what cannot go through `request`, such as the log stream. */
+export function reportUnauthorized() {
+  unauthorizedHandler?.()
+}
+
+// These answer 401 as part of their job, so a 401 from them is not "the session is gone".
+const SESSION_PATHS = new Set(['/api/login', '/api/logout', '/api/me'])
+
+/** @param {string|null} value the Retry-After header @returns {number|undefined} */
+function secondsOf(value) {
+  return value !== null && /^\d+$/.test(value) ? Number(value) : undefined
 }
 
 /** @param {string} path @param {RequestInit} [init] @returns {Promise<any>} */
@@ -25,6 +48,9 @@ async function request(path, init) {
     throw new ApiError('cannot reach caddy-view', 0)
   }
 
+  if (res.status === 204) return undefined
+  if (res.status === 401 && !SESSION_PATHS.has(path)) unauthorizedHandler?.()
+
   let body
   try {
     body = await res.json()
@@ -34,6 +60,7 @@ async function request(path, init) {
   }
   if (!res.ok) {
     throw new ApiError(typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`, res.status, {
+      retryAfter: secondsOf(res.headers.get('Retry-After')),
       code: typeof body?.code === 'string' ? body.code : undefined,
       line: typeof body?.line === 'number' ? body.line : undefined,
       errors: Array.isArray(body?.errors) ? body.errors : undefined,
@@ -73,6 +100,33 @@ function send(method, path, body) {
 /** @param {string} path @param {object} body @returns {Promise<any>} */
 function post(path, body) {
   return send('POST', path, body)
+}
+
+/**
+ * Who is logged in. `required` is false when this caddy-view has no login (its routes do not exist); when it is true and
+ * `user` is null, a login is needed.
+ * @returns {Promise<{required: boolean, user: string|null}>}
+ */
+export async function getSession() {
+  try {
+    const body = await get('/api/me')
+    return { required: true, user: body.user.username }
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return { required: true, user: null }
+    if (err instanceof ApiError && err.status === 404) return { required: false, user: null }
+    throw err
+  }
+}
+
+/** Starts a session; the server sets its cookie. Throws an ApiError, with `retryAfter` when held back. @param {string} username @param {string} password @returns {Promise<string>} the username as stored */
+export async function login(username, password) {
+  const body = await post('/api/login', { username, password })
+  return body.user.username
+}
+
+/** Ends the session and clears its cookie. @returns {Promise<void>} */
+export async function logout() {
+  await post('/api/logout', {})
 }
 
 /** @returns {Promise<{caddy: {reachable: boolean, endpoint: string, error?: string}}>} */

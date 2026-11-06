@@ -5,12 +5,10 @@
 A lightweight web UI that runs next to [Caddy](https://caddyserver.com): dashboard, metrics, logs, Caddyfile
 editor with validation and rollback, and a reverse proxy wizard.
 
-> **Status: early development.** Done: the Admin API client, `doctor`, `serve` with a read-only web UI (Dashboard,
-> Config and live Logs), a history store (access logs, metrics, rollups, retention) with its API, and editing the
-> Caddyfile through the API with validation, revisions and rollback. The interface for history and editing, the sites
-> wizard, login, a Docker image and releases are still to come: today editing is used through the API, and `serve`
-> only listens on loopback. See [docs/PLAN.md](docs/PLAN.md) for the design and phases, and
-> [docs/backlog.md](docs/backlog.md) for what is planned next.
+> **Status: ready for its first release.** Everything of the plan is built: dashboard, metrics, live and historical
+> logs, a Caddyfile editor with validation and rollback, a reverse proxy wizard, login, a Docker image and release
+> builds. It has been tested against Caddy 2.11, and the Docker image and the compose example have been run against a
+> real Caddy; the release workflow has not run yet, since it needs a tag and a registry. See [docs/PLAN.md](docs/PLAN.md) for the design.
 
 ## Goals
 
@@ -19,7 +17,58 @@ editor with validation and rollback, and a reverse proxy wizard.
 - Never leaves Caddy with an invalid configuration: validate, apply, roll back.
 - Secure by default: localhost bind, login required, read-only until editing is enabled.
 
-## What works today
+## Quick start
+
+### With Docker
+
+caddy-view runs next to Caddy and talks to it through the Admin API on a unix socket that the two containers share.
+[`docker-compose.example.yml`](docker-compose.example.yml) sets up both, and
+[`deploy/Caddyfile.example`](deploy/Caddyfile.example) is the Caddyfile it expects.
+
+```sh
+mkdir -p caddy/conf.d && sudo chown -R 65532:65532 caddy   # caddy-view runs as 65532 and writes the Caddyfile there
+cp deploy/Caddyfile.example caddy/Caddyfile
+cp docker-compose.example.yml docker-compose.yml
+docker compose up -d
+docker compose logs caddy-view | grep password            # the first password, shown once
+```
+
+Open <http://localhost:8484> and sign in as `admin`. Forgot the password? `docker compose exec caddy-view caddy-view
+reset-password --data-dir /data` sets a new one and ends every session.
+
+### With a binary
+
+Download the archive for your system from the releases page (Linux and macOS, amd64 and arm64; each release has a
+`checksums.txt`), or `go install github.com/Auugustocesar/caddy-view/cmd/caddy-view@latest`. Then:
+
+```sh
+caddy-view doctor --admin unix:///run/caddy/admin.sock --caddyfile /etc/caddy/Caddyfile   # what is missing in Caddy?
+caddy-view serve  --admin unix:///run/caddy/admin.sock --caddyfile /etc/caddy/Caddyfile --allow-edit
+```
+
+The first start prints the password of `admin` once. [`deploy/caddy-view.service`](deploy/caddy-view.service) is a
+hardened systemd unit, with the commands to install it in its header.
+
+### Reaching it from another machine
+
+caddy-view listens on `127.0.0.1` and has a login, but it speaks plain HTTP, so the password and the session cookie
+must not cross a network in clear text. The way to serve it to others is a Caddy site over TLS in front of it:
+
+```caddyfile
+view.example.com {
+	reverse_proxy 127.0.0.1:8484
+}
+```
+
+```sh
+caddy-view serve --allowed-host view.example.com --secure-cookie ...
+```
+
+`--allowed-host` makes it accept requests for that name (it refuses every other `Host`, which blocks DNS rebinding),
+and `--secure-cookie` marks the session cookie `Secure` although the request reaches caddy-view as plain HTTP.
+Listening on an address that others can reach, without such a proxy, needs `--allow-insecure-http`.
+
+## Reference
 
 ### `caddy-view doctor`
 
@@ -28,10 +77,13 @@ Checks that a Caddy setup has what caddy-view needs and tells you how to fix wha
 | Check | Looks at |
 |---|---|
 | `admin-transport` | How the Admin API is reached. A unix socket or loopback is fine; a network address is flagged because the Admin API has no authentication |
+| `admin-socket` | With a unix socket: that it exists, accepts connections and may be used by this user, and if not, which of those it is |
 | `admin-reachable` | Whether the Admin API answers with the running configuration |
 | `metrics` | `metrics` enabled on every HTTP server |
 | `access-log` | Access logs written to a file as JSON |
+| `access-log-readable` | That caddy-view can read that file, where it sees it (`--access-log` when that is another path, as in Docker) |
 | `caddyfile` | The Caddyfile can be read (with `--caddyfile`) |
+| `caddyfile-writable` | That the Caddyfile and its directory can be written, which `--allow-edit` needs: a change is written to a new file that replaces the old one (with `--caddyfile`; a warning, since a read-only caddy-view does not need it) |
 | `import` | The Caddyfile imports the file caddy-view manages, by a relative or an absolute path (with `--caddyfile`) |
 | `relative-import` | The Caddyfile imports no file by a relative path (with `--caddyfile`). caddy-view refuses to apply such a Caddyfile, because Caddy would resolve the path from its own working directory and drop what is imported. Write it in full: `import /etc/caddy/conf.d/*.caddy` |
 
@@ -54,13 +106,14 @@ Flags:
 | `--admin` | `http://localhost:2019` | Admin API address: `unix:///path`, `unix//path` (Caddy syntax), `http://host:port` or `host:port` |
 | `--caddyfile` | none | Path to the Caddyfile; enables the Caddyfile checks |
 | `--managed-file` | `conf.d/caddy-view-sites.caddy` | File managed by caddy-view, relative to the Caddyfile directory |
+| `--access-log` | from Caddy | The access log as caddy-view sees it, to check that it can be read |
 
 Exit codes: `0` when no check failed (warnings do not fail the run), `1` when a check failed, `2` on a usage error.
 
 ### `caddy-view serve`
 
-Runs the web UI and the JSON API. By default it only reads: it never changes Caddy unless you start it with
-`--allow-edit` (see "Editing the Caddyfile"). It also keeps a history in a SQLite database: the access log is read into
+Runs the web UI and the JSON API, behind a login (see "Login"). By default it only reads: it never changes Caddy unless
+you start it with `--allow-edit` (see "Editing the Caddyfile"). It also keeps a history in a SQLite database: the access log is read into
 it, Caddy's metrics are scraped into it, and both are summarised in minute and hour rollups.
 
 ```
@@ -68,7 +121,7 @@ $ caddy-view serve --admin localhost:2019
 caddy-view listening on http://127.0.0.1:8484 (Admin API: http://localhost:2019)
 ```
 
-Always available, read-only:
+Always available once logged in, read-only:
 
 | Route | Answer |
 |---|---|
@@ -106,7 +159,11 @@ Flags:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--admin` | `http://localhost:2019` | Admin API address, same forms as for `doctor` |
-| `--listen` | `127.0.0.1:8484` | Address to listen on. Loopback only (see below) |
+| `--listen` | `127.0.0.1:8484` | Address to listen on. Beyond loopback it needs the login and `--allow-insecure-http` |
+| `--no-auth` | off | Turn the login off. Accepted only with a loopback `--listen`: without a login, whoever reaches the port can change Caddy |
+| `--allow-insecure-http` | off | Accept plain HTTP on an address that others can reach (it logs a warning). Not needed on loopback, which is where a Caddy site in front of caddy-view on the same machine reaches it |
+| `--allowed-host` | none | A `Host` name to accept besides this machine's own, such as the Caddy site in front of caddy-view; repeat it for more. A bare name or IP, no port or wildcard. The host of a specific `--listen` address is accepted too |
+| `--secure-cookie` | off | Always mark the session cookie `Secure`, for a proxy that ends TLS. Do not use it when browsers reach caddy-view over plain HTTP: they would drop the cookie |
 | `--show-secrets` | off | Return secrets in clear text from `/api/config` |
 | `--log-level` | `info` | `debug`, `info`, `warn` or `error` |
 | `--access-log` | from Caddy | JSON access log file to read. By default the first JSON file logger of the running configuration is used; set it when Caddy runs in a container and sees another path |
@@ -194,22 +251,51 @@ by hand, the next change is refused with `managed-file-edited` rather than lose 
 managed file (`not-imported` otherwise), and a change to the Caddyfile that would stop importing it while there are
 sites is refused too.
 
+### Login
+
+Every route of the API, and so the whole UI, needs a session, except `POST /api/login`, `POST /api/logout`,
+`GET /api/health` and the static files of the UI (so the login screen can load).
+
+- The first start with an empty database creates the user `admin` with a random password and prints it **once**, on
+  stderr (`journalctl`, `docker logs`). With `--no-persist` there is a new one at every start.
+- `caddy-view reset-password [--data-dir D] [--username admin]` sets a new random password, prints it once, and ends
+  every session of that user. It works on the database, so caddy-view may be running or not.
+- Passwords are hashed with argon2id. A session is a random token in an `HttpOnly`, `SameSite=Strict` cookie; the
+  database keeps only its SHA-256, so a copy of the database cannot be used to log in. A session ends after 7 days, or
+  after 24 hours without use, or at sign out.
+- 5 failed logins from one address within 15 minutes hold that address back (`429` with `Retry-After`). The address is
+  the one of the connection: a header such as `X-Forwarded-For` is not trusted, since the sender writes it.
+- Behind a proxy on the same machine, every request comes from that proxy, so a guesser and the user share the count.
+  Reach caddy-view directly where that matters.
+
+| Route | Answer |
+|---|---|
+| `POST /api/login` | `{"username":"…","password":"…"}` gives `{"user":{"username":"…"}}` and sets the cookie; `401` for a wrong username or password, without saying which |
+| `POST /api/logout` | Ends the session and clears the cookie (`204`) |
+| `GET /api/me` | Who is logged in |
+| `GET /api/health` | `{"status":"ok"}`, or `503` while the database cannot be read. Needs no login; it says nothing else |
+
+`caddy-view healthcheck [--address 127.0.0.1:8484] [--timeout 5s]` calls the last one and exits 0 only on `ok`; it is the
+`HEALTHCHECK` of the Docker image, which has no `curl`. `caddy-view version` prints the version.
+
 ### Security notes
 
-- **Loopback only.** There is no login yet, and the Admin API has no authentication, so `serve` refuses to listen
-  on anything but `127.0.0.1`, `localhost` or `[::1]`. To reach it from another machine, use an SSH tunnel.
-  Login arrives in phase 5.
-- **Host check.** Requests whose `Host` header is not a loopback name get a 403, which blocks DNS rebinding.
+- **Login, and plain HTTP.** Everything needs a session (see "Login"). caddy-view speaks only HTTP, so on an address that
+  others can reach it refuses to start without `--allow-insecure-http`, and with `--no-auth` it refuses outright. Put TLS
+  in front of it (a Caddy site) rather than exposing its port. The Admin API of Caddy has no authentication of its own, which
+  is why caddy-view reaches it by a unix socket and the compose example never publishes port 2019.
+- **Host check.** Requests whose `Host` header is not a loopback name, an `--allowed-host`, or the host of `--listen` get
+  a 403, which blocks DNS rebinding.
 - **Editing is opt-in, and so is reading the Caddyfile.** The raw file and its revisions can hold secrets that cannot
   be redacted, so `/api/caddyfile` and `/api/revisions` need `--allow-edit` too. Whoever can reach the port can change
   Caddy while it is on, which `serve` says in its log.
-- **Cross-site requests.** Every `POST` must be `application/json` (415 otherwise), and one that names an `Origin` must
+- **Cross-site requests.** The cookie is `SameSite=Strict`. Every `POST` must be `application/json` (415 otherwise), and one that names an `Origin` must
   name caddy-view itself (403 otherwise), so a web page cannot make your browser edit Caddy. `curl` sends no `Origin`
   and is fine.
 - **Secrets are redacted.** Values of keys such as `password`, `token`, `secret`, `key`, `*_token`, `*_secret`
   and credential headers become `[redacted]` in `/api/config`. References like `{env.TOKEN}` or `{file./path}` stay visible.
 - **Password hashes are secrets too.** The bcrypt hash of a managed site's password is in the `sites` table, in the snapshots of
-  the revisions and in the managed file, so protect the data directory and the managed file as you would a password file. The
+  the revisions and in the managed file, and the hashes of the users' passwords are in the `users` table, so protect the data directory and the managed file as you would a password file. The
   password itself is only ever in the request that sets it.
 - **Stored paths drop the query string** unless `--store-query`, since query strings often carry tokens.
 - **Logs** go to stderr as text: failures to read Caddy and rejected hosts as warnings, every request as a debug
@@ -217,21 +303,25 @@ sites is refused too.
 
 ## Install
 
-Requires Go 1.26.10 or newer. Older releases have known standard library vulnerabilities, and `go install` fetches
-the right toolchain by itself.
+See "Quick start" for Docker and for the release archives. To build it yourself, Go 1.26.10 or newer is required (older
+releases have known standard library vulnerabilities, and `go install` fetches the right toolchain by itself):
 
 ```sh
 go install github.com/Auugustocesar/caddy-view/cmd/caddy-view@latest
 caddy-view doctor --admin localhost:2019
 ```
 
-Or build from a clone:
+Or from a clone:
 
 ```sh
 git clone https://github.com/Auugustocesar/caddy-view.git
 cd caddy-view
 go build -o caddy-view ./cmd/caddy-view
+docker build -t caddy-view .
 ```
+
+Releases are made by pushing a tag such as `v0.1.0`: the workflow in `.github/workflows/release.yml` runs the tests, then
+publishes the archives with GoReleaser (`.goreleaser.yaml`) and the multi-arch image to `ghcr.io`.
 
 ## Development
 
@@ -269,14 +359,9 @@ and the tests with `-race` and shuffled order on Linux, macOS and Windows, plus 
 
 ## Roadmap
 
-| Phase | Deliverable | State |
-|---|---|---|
-| 0 | Repo, structure, `doctor`, CI | Done |
-| 1 | Read-only UI: dashboard, config, live logs | Done |
-| 2 | SQLite, log ingestion, metrics history | Planned |
-| 3 | Caddyfile editing with validation and rollback | Planned |
-| 4 | Reverse proxy wizard and traffic charts | Planned |
-| 5 | Login hardening, releases, Docker image | Planned |
+All the phases of [docs/PLAN.md](docs/PLAN.md) are built; what is left is the first release and what its users find.
+The login is designed in [docs/phase-5.md](docs/phase-5.md). Not planned for v1: Postgres, several Caddy instances,
+plugin management, and showing certificate expiry (see [docs/backlog.md](docs/backlog.md)).
 
 ## License
 

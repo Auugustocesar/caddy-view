@@ -77,7 +77,7 @@ func New(addr string) (*Client, error) {
 		return nil, errors.New("caddy admin address is empty")
 	}
 
-	if sock, ok := unixPath(addr); ok {
+	if sock, ok := UnixPath(addr); ok {
 		if sock == "" {
 			return nil, fmt.Errorf("unix address %q has no socket path", addr)
 		}
@@ -111,8 +111,8 @@ func New(addr string) (*Client, error) {
 	return &Client{endpoint: base, base: base, http: &http.Client{Timeout: requestTimeout}}, nil
 }
 
-// unixPath extracts the socket path from "unix://<path>" or Caddy's "unix/<path>" syntax.
-func unixPath(addr string) (string, bool) {
+// UnixPath extracts the socket path from "unix://<path>" or Caddy's "unix/<path>" syntax, and reports whether addr is one.
+func UnixPath(addr string) (string, bool) {
 	if rest, ok := strings.CutPrefix(addr, "unix://"); ok {
 		return rest, true
 	}

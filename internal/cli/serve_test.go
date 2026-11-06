@@ -40,10 +40,22 @@ func (b *safeBuffer) String() string {
 	return b.buf.String()
 }
 
-var listeningLine = regexp.MustCompile(`http://127\.0\.0\.1:\d+`)
+var listeningLine = regexp.MustCompile(`http://\S+:\d+`)
 
-// startServe runs `caddy-view serve` in the background on a free loopback port.
+// startServe runs `caddy-view serve` in the background on a free loopback port, with the login off: most tests are
+// about something else, and the login has its own (login_test.go).
 func startServe(t *testing.T, extraArgs ...string) (baseURL string, stop func() int, stdout, stderr *safeBuffer) {
+	t.Helper()
+	return launchServe(t, append([]string{"--no-auth"}, extraArgs...))
+}
+
+// startServeWithLogin is startServe with the login on, as it is by default.
+func startServeWithLogin(t *testing.T, extraArgs ...string) (baseURL string, stop func() int, stdout, stderr *safeBuffer) {
+	t.Helper()
+	return launchServe(t, extraArgs)
+}
+
+func launchServe(t *testing.T, extraArgs []string) (baseURL string, stop func() int, stdout, stderr *safeBuffer) {
 	t.Helper()
 	stdout, stderr = &safeBuffer{}, &safeBuffer{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -82,23 +94,6 @@ func TestUsageListsServe(t *testing.T) {
 	_, stdout, _ := run(t, "help")
 	if !strings.Contains(stdout, "serve") {
 		t.Errorf("usage %q does not list the serve command", stdout)
-	}
-}
-
-func TestServeRefusesNonLoopback(t *testing.T) {
-	for _, listen := range []string{"0.0.0.0:0", ":0", "192.168.50.10:8484"} {
-		t.Run(listen, func(t *testing.T) {
-			code, stdout, stderr := run(t, "serve", "--listen", listen)
-			if code != 2 {
-				t.Errorf("exit code = %d, want 2", code)
-			}
-			if !strings.Contains(stderr, "loopback") {
-				t.Errorf("stderr %q does not explain that only loopback is allowed", stderr)
-			}
-			if listeningLine.MatchString(stdout) || strings.Contains(stdout, "listening") {
-				t.Errorf("stdout %q suggests the server started", stdout)
-			}
-		})
 	}
 }
 
