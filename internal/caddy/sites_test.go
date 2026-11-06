@@ -211,3 +211,148 @@ func TestExtractSitesToleratesMalformedConfig(t *testing.T) {
 		})
 	}
 }
+
+// proxyRoute is a route that matches host (empty: no host matcher) and proxies to dial, in the shape the Caddyfile
+// adapter writes for `handle @host { reverse_proxy dial }`: the proxy sits in a subroute of its own.
+func proxyRoute(host, dial string) string {
+	match := ""
+	if host != "" {
+		match = `"match":[{"host":["` + host + `"]}],`
+	}
+	return `{` + match + `"handle":[{"handler":"subroute","routes":[
+		{"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"` + dial + `"}]}]}
+	]}],"terminal":true}`
+}
+
+// wildcardRoute is a route for host whose subroute holds the given inner routes, as `*.example.com { ... }` with one
+// `handle @name` block per subdomain is adapted.
+func wildcardRoute(host string, inner ...string) string {
+	joined := ""
+	for i, r := range inner {
+		if i > 0 {
+			joined += ","
+		}
+		joined += r
+	}
+	return `{"match":[{"host":["` + host + `"]}],"handle":[{"handler":"subroute","routes":[` + joined + `]}],"terminal":true}`
+}
+
+func TestExtractSitesFollowsHostsInsideSubroutes(t *testing.T) {
+	abort := `{"handle":[{"handler":"static_response","abort":true}]}`
+	tests := []struct {
+		name   string
+		config string
+		want   []Site
+	}{
+		{
+			name: "a wildcard with one route per subdomain gives one site per subdomain, and not the wildcard",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("*.example.com",
+				proxyRoute("app.example.com", "10.0.0.1:8080"),
+				proxyRoute("vault.example.com", "10.0.0.2:8000")) + `]}}`),
+			want: []Site{
+				{Server: "srv0", Host: "app.example.com", Upstreams: []string{"10.0.0.1:8080"}},
+				{Server: "srv0", Host: "vault.example.com", Upstreams: []string{"10.0.0.2:8000"}},
+			},
+		},
+		{
+			name: "a fallback that answers for unknown subdomains is not a site",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("*.example.com",
+				proxyRoute("app.example.com", "10.0.0.1:8080"), abort) + `]}}`),
+			want: []Site{{Server: "srv0", Host: "app.example.com", Upstreams: []string{"10.0.0.1:8080"}}},
+		},
+		{
+			name: "a fallback that proxies is the wildcard's own site, after the subdomains before it",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("*.example.com",
+				proxyRoute("app.example.com", "10.0.0.1:8080"), proxyRoute("", "10.0.0.9:80")) + `]}}`),
+			want: []Site{
+				{Server: "srv0", Host: "app.example.com", Upstreams: []string{"10.0.0.1:8080"}},
+				{Server: "srv0", Host: "*.example.com", Upstreams: []string{"10.0.0.9:80"}},
+			},
+		},
+		{
+			name: "a subdomain served by two inner routes is one site, and an upstream is listed once",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("*.example.com",
+				proxyRoute("guaca.example.com", "10.0.0.5:8080"),
+				proxyRoute("guaca.example.com", "10.0.0.5:8080"),
+				proxyRoute("guaca.example.com", "10.0.0.6:8080")) + `]}}`),
+			want: []Site{{Server: "srv0", Host: "guaca.example.com", Upstreams: []string{"10.0.0.5:8080", "10.0.0.6:8080"}}},
+		},
+		{
+			name: "an inner route that names several hosts gives one site each",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("*.example.com", `{"match":[{"host":["a.example.com","b.example.com"]}],"handle":[
+				{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.3:80"}]}
+			]}`) + `]}}`),
+			want: []Site{
+				{Server: "srv0", Host: "a.example.com", Upstreams: []string{"10.0.0.3:80"}},
+				{Server: "srv0", Host: "b.example.com", Upstreams: []string{"10.0.0.3:80"}},
+			},
+		},
+		{
+			name: "a host with its own proxy and routes for other hosts inside lists its own site first",
+			config: serversConfig(`{"srv0":{"routes":[{"match":[{"host":["x.example.com"]}],"handle":[
+				{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.1:80"}]},
+				{"handler":"subroute","routes":[` + proxyRoute("y.example.com", "10.0.0.2:80") + `]}
+			]}]}}`),
+			want: []Site{
+				{Server: "srv0", Host: "x.example.com", Upstreams: []string{"10.0.0.1:80"}},
+				{Server: "srv0", Host: "y.example.com", Upstreams: []string{"10.0.0.2:80"}},
+			},
+		},
+		{
+			name: "hosts nested more than one level deep are found",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("*.example.com", wildcardRoute("*.eu.example.com",
+				proxyRoute("a.eu.example.com", "10.0.1.1:80"))) + `]}}`),
+			want: []Site{{Server: "srv0", Host: "a.eu.example.com", Upstreams: []string{"10.0.1.1:80"}}},
+		},
+		{
+			// Guards what already worked: inner routes without a host belong to the host that holds them.
+			name: "inner routes without a host are merged into the outer host",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("app.example.com",
+				`{"match":[{"path":["/api/*"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.1:80"}]}]}`,
+				`{"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.2:80"}]}]}`) + `]}}`),
+			want: []Site{{Server: "srv0", Host: "app.example.com", Upstreams: []string{"10.0.0.1:80", "10.0.0.2:80"}}},
+		},
+		{
+			name: "a host whose subroute proxies nothing is still listed, with no upstreams",
+			config: serversConfig(`{"srv0":{"routes":[` + wildcardRoute("docs.example.com",
+				`{"handle":[{"handler":"file_server"}]}`) + `]}}`),
+			want: []Site{{Server: "srv0", Host: "docs.example.com", Upstreams: []string{}}},
+		},
+		{
+			name: "a catch-all route with a subroute is still one catch-all site",
+			config: serversConfig(`{"srv0":{"routes":[{"handle":[{"handler":"subroute","routes":[` +
+				`{"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.9:80"}]}]}]}]}]}}`),
+			want: []Site{{Server: "srv0", Host: "", Upstreams: []string{"10.0.0.9:80"}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExtractSites(parseConfig(t, tt.config))
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ExtractSites =\n%+v\nwant\n%+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractSitesToleratesMalformedSubroutes(t *testing.T) {
+	configs := map[string]string{
+		"inner routes is a string":   serversConfig(`{"srv0":{"routes":[{"match":[{"host":["a.example.com"]}],"handle":[{"handler":"subroute","routes":"oops"}]}]}}`),
+		"inner route is null":        serversConfig(`{"srv0":{"routes":[{"match":[{"host":["a.example.com"]}],"handle":[{"handler":"subroute","routes":[null]}]}]}}`),
+		"inner match is an object":   serversConfig(`{"srv0":{"routes":[{"handle":[{"handler":"subroute","routes":[{"match":{"host":["b"]},"handle":[]}]}]}]}}`),
+		"inner host is a number":     serversConfig(`{"srv0":{"routes":[{"handle":[{"handler":"subroute","routes":[{"match":[{"host":[7]}],"handle":[]}]}]}]}}`),
+		"subroute inside a subroute": serversConfig(`{"srv0":{"routes":[{"handle":[{"handler":"subroute","routes":[{"handle":[{"handler":"subroute"}]}]}]}]}}`),
+	}
+	for name, raw := range configs {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("ExtractSites panicked: %v", r)
+				}
+			}()
+			if got := ExtractSites(parseConfig(t, raw)); got == nil {
+				t.Error("ExtractSites returned nil, want a non-nil slice")
+			}
+		})
+	}
+}
