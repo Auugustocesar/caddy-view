@@ -207,6 +207,7 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 | 3f | Hardening of the apply flow, done: refuse relative imports, crash recovery, verify after load, one apply across processes (`docs/backlog.md`, B1 to B4) | Each has a failing test first and a real-Caddy check where it applies |
 | 4 | Sites wizard, rollup charts, and the whole front end for history and editing (Caddyfile tab, log search tab, dashboard summary, design pass); proposal in `docs/phase-4.md` | Creating a reverse proxy from the UI works |
 | 5 | Full login, release, Docker, docs; built in slices 5a to 5f (`docs/phase-5.md`) | Fresh-machine install takes minutes |
+| 6 | The redesign, and caddy-view checking the upstreams itself; slices 6a to 6e (`docs/phase-6.md`, done) | A stopped upstream shows as down, and the dashboard says what needs attention |
 
 Everything found by comparing with the reference project that is not in these phases is in `docs/backlog.md`, with the
 phase it goes to. CI runs gofmt, vet, golangci-lint (which includes staticcheck) and govulncheck, and the tests with `-race` on Linux, macOS and
@@ -233,4 +234,5 @@ Windows, plus integration tests against a real Caddy.
 | Certificates | Caddy obtains, renews and validates them itself; the UI does not show their expiry in v1 (`docs/backlog.md`) |
 | README | Rewritten for open source readers with the first release: a quick start first, the reference after. Screenshots are still to be added |
 | Login | argon2id, one `admin` user, cookie sessions with only their hash stored, no CSRF token (`docs/phase-5.md`) |
+| Upstream health | caddy-view checks the upstreams itself; Caddy reports every upstream healthy when it has no health checks (`docs/phase-6.md`) |
 | Reference project | [caddy-visualizer](https://github.com/dree007/caddy-visualizer), a source of good practices, not copied; the comparison and what came out of it is `docs/backlog.md` |
