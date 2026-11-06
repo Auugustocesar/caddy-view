@@ -266,7 +266,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			fmt.Fprintf(stderr, "serve: %v\n", err)
 			return 1
 		}
-		defer lock.Release() // the error of giving up a lock that the system frees at exit anyway is not worth a message
+		defer func() { _ = lock.Release() }() // the error of giving up a lock that the system frees at exit anyway is not worth a message
 	}
 
 	hist, dbFile, err := openHistory(ctx, *dataDir, *noPersist)

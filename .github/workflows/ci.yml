@@ -26,8 +26,11 @@ jobs:
       - name: go mod tidy
         run: go mod tidy -diff
 
-      - name: staticcheck
-        run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.2 ./...
+      # Runs staticcheck, go vet, errcheck and the rest of .golangci.yml; the version is pinned like the other tools.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9.3.0
+        with:
+          version: v2.15.0
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

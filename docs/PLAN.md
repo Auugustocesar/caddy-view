@@ -201,7 +201,7 @@ Language: all code, comments, docs, commit messages and UI text are in English.
 
 MVP is phases 0 to 3, but the editing of phase 3 has no interface until phase 4: today it is used through the API.
 Everything found by comparing with the reference project that is not in these phases is in `docs/backlog.md`, with the
-phase it goes to. CI runs gofmt, vet, staticcheck and govulncheck, and the tests with `-race` on Linux, macOS and
+phase it goes to. CI runs gofmt, vet, golangci-lint (which includes staticcheck) and govulncheck, and the tests with `-race` on Linux, macOS and
 Windows, plus integration tests against a real Caddy.
 
 ## 13. Risks

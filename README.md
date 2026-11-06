@@ -264,7 +264,7 @@ npm run build   # writes ../internal/web/dist
 npm run dev     # hot reload, proxies /api to `caddy-view serve` on 127.0.0.1:8484
 ```
 
-CI also runs `staticcheck`, `govulncheck` (weekly too, because new vulnerabilities appear without code changes)
+CI also runs `golangci-lint` (with `staticcheck` in it), `govulncheck` (weekly too, because new vulnerabilities appear without code changes)
 and the tests with `-race` and shuffled order on Linux, macOS and Windows, plus the UI tests and `npm audit`.
 
 ## Roadmap

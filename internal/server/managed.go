@@ -328,11 +328,11 @@ func (a *api) sitesPreview(w http.ResponseWriter, r *http.Request) {
 	if i >= 0 {
 		id, previous = in.ID, &current[i]
 	}
-	site := in.siteInput.site(id)
+	site := in.site(id)
 	// A preview checks the password by the same rules but with the cheapest hash, and then puts a placeholder where the
 	// hash goes: a preview is asked at every pause in typing, and the hash of a site that keeps its password must not
 	// be given to the browser.
-	if errs := in.siteInput.setBasicAuth(&site, previous, bcrypt.MinCost); errs != nil {
+	if errs := in.setBasicAuth(&site, previous, bcrypt.MinCost); errs != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "errors": fieldProblems(id, errs)})
 		return
 	}
