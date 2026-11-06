@@ -1,16 +1,18 @@
 <script>
   import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-  import { HighlightStyle, StreamLanguage, bracketMatching, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language'
-  import { Annotation, EditorState, StateEffect, StateField } from '@codemirror/state'
+  import { HighlightStyle, StreamLanguage, bracketMatching, foldGutter, foldKeymap, foldService, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language'
+  import { Annotation, EditorState, RangeSet, StateEffect, StateField } from '@codemirror/state'
   import { Decoration, EditorView, GutterMarker, drawSelection, gutter, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
   import { tags } from '@lezer/highlight'
   import { untrack } from 'svelte'
   import { caddyfileTokenizer } from '../lib/caddyfile-language.js'
+  import { blockRanges } from '../lib/blocks.js'
+  import { diffLines } from '../lib/diff.js'
   import { cspNonce } from '../lib/nonce.js'
 
-  /** @type {{value: string, label: string, errorLine?: number, readonly?: boolean, onchange?: (text: string) => void}} */
-  let { value, label, errorLine = 0, readonly = false, onchange = () => {} } = $props()
+  /** @type {{value: string, label: string, errorLine?: number, baseline?: string, readonly?: boolean, onchange?: (text: string) => void}} */
+  let { value, label, errorLine = 0, baseline = undefined, readonly = false, onchange = () => {} } = $props()
 
   // Changes the page makes (a new value, a formatted text) are not edits and are not reported.
   const fromOutside = Annotation.define()
@@ -38,6 +40,66 @@
     class: 'cm-error-gutter',
     lineMarker: (view, line) => (view.state.field(errorLineField) === view.state.doc.lineAt(line.from).number ? errorMarker : null),
     lineMarkerChange: (update) => update.startState.field(errorLineField) !== update.state.field(errorLineField),
+  })
+
+  class ChangeMarker extends GutterMarker {
+    /** @param {'added'|'removed'} kind */
+    constructor(kind) {
+      super()
+      this.kind = kind
+    }
+    eq(other) {
+      return other.kind === this.kind
+    }
+    toDOM() {
+      const el = document.createElement('span')
+      el.className = 'cm-change-marker'
+      el.dataset.kind = this.kind
+      return el
+    }
+  }
+  const markers = { added: new ChangeMarker('added'), removed: new ChangeMarker('removed') }
+
+  /** The margin marks for the lines that differ from `base`: added or changed lines, and where lines were removed. */
+  function changeMarkers(state, base) {
+    if (base === undefined || base === state.doc.toString()) return RangeSet.empty
+    const marks = new Map()
+    let line = 1
+    let removedAt = 0
+    for (const entry of diffLines(base, state.doc.toString())) {
+      if (entry.type === 'same') line++
+      else if (entry.type === 'add') marks.set(line++, 'added')
+      else removedAt = removedAt || line
+      if (entry.type !== 'del' && removedAt) {
+        const at = Math.min(removedAt, state.doc.lines)
+        if (!marks.has(at)) marks.set(at, 'removed')
+        removedAt = 0
+      }
+    }
+    if (removedAt) marks.set(state.doc.lines, marks.get(state.doc.lines) ?? 'removed')
+    const ranges = [...marks].sort((a, b) => a[0] - b[0]).map(([n, kind]) => markers[kind].range(state.doc.line(n).from))
+    return RangeSet.of(ranges)
+  }
+
+  const setBaseline = StateEffect.define()
+  const baselineField = StateField.define({
+    create: () => undefined,
+    update: (base, tr) => tr.effects.reduce((current, effect) => (effect.is(setBaseline) ? effect.value : current), base),
+  })
+  const changeField = StateField.define({
+    create: () => RangeSet.empty,
+    update: (marks, tr) =>
+      tr.docChanged || tr.effects.some((effect) => effect.is(setBaseline)) ? changeMarkers(tr.state, tr.state.field(baselineField)) : marks,
+  })
+  const changeGutter = gutter({ class: 'cm-change-gutter', markers: (view) => view.state.field(changeField) })
+
+  // A block folds from the end of the line that opens it to its closing brace, which stays in view.
+  const folding = foldService.of((state, lineStart) => {
+    const startLine = state.doc.lineAt(lineStart)
+    const range = blockRanges(state.doc.toString())
+      .filter((r) => r.startLine === startLine.number)
+      .reduce((widest, r) => (!widest || r.endLine > widest.endLine ? r : widest), null)
+    return range ? { from: startLine.to, to: state.doc.line(range.endLine).from + range.endColumn } : null
   })
 
   // The colours are custom properties of the design system, so the editor follows the theme with no extra work.
@@ -68,6 +130,12 @@
     '.cm-nonmatchingBracket': { backgroundColor: 'color-mix(in srgb, var(--bad) 25%, transparent)', color: 'inherit' },
     '.cm-error-line': { backgroundColor: 'color-mix(in srgb, var(--bad) 14%, transparent)', boxShadow: 'inset 3px 0 0 var(--bad)' },
     '.cm-error-gutter': { minWidth: '1.1rem' },
+    '.cm-change-gutter': { minWidth: '0.4rem' },
+    '.cm-change-marker': { display: 'block', height: '100%', width: '3px', marginLeft: '2px' },
+    '.cm-change-marker[data-kind="added"]': { backgroundColor: 'var(--ok)' },
+    '.cm-change-marker[data-kind="removed"]': { backgroundColor: 'var(--bad)', height: '3px', marginTop: '-1px' },
+    '.cm-foldGutter span': { cursor: 'pointer', color: 'var(--muted)', padding: '0 0.2rem' },
+    '.cm-foldPlaceholder': { backgroundColor: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border, var(--muted))', padding: '0 0.3rem' },
     '.cm-error-marker': { color: 'var(--bad)', fontWeight: '700' },
   })
 
@@ -82,6 +150,11 @@
       extensions: [
         lineNumbers(),
         errorGutter,
+        changeGutter,
+        baselineField,
+        changeField,
+        folding,
+        foldGutter(),
         highlightActiveLineGutter(),
         highlightActiveLine(),
         history(),
@@ -99,7 +172,7 @@
         EditorState.readOnly.of(untrack(() => readonly)),
         EditorView.editable.of(!untrack(() => readonly)),
         EditorView.cspNonce.of(cspNonce()),
-        keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
+        keymap.of([...closeBracketsKeymap, ...foldKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorView.contentAttributes.of({ 'aria-label': untrack(() => label) }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !update.transactions.some((tr) => tr.annotation(fromOutside))) onchange(update.state.doc.toString())
@@ -107,7 +180,7 @@
       ],
     })
     view = new EditorView({ state, parent: host })
-    view.dispatch({ effects: setErrorLine.of(untrack(() => errorLine)) })
+    view.dispatch({ effects: [setErrorLine.of(untrack(() => errorLine)), setBaseline.of(untrack(() => baseline))] })
     return () => {
       view?.destroy()
       view = null
@@ -124,6 +197,11 @@
     if (view && text !== view.state.doc.toString()) {
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, annotations: fromOutside.of(true) })
     }
+  })
+
+  $effect(() => {
+    const base = baseline
+    if (view && view.state.field(baselineField) !== base) view.dispatch({ effects: setBaseline.of(base) })
   })
 
   $effect(() => {

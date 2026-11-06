@@ -1,5 +1,5 @@
 import { insertNewlineAndIndent } from '@codemirror/commands'
-import { indentUnit } from '@codemirror/language'
+import { foldable, indentUnit } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
 import { render } from '@testing-library/svelte'
 import { describe, expect, it, vi } from 'vitest'
@@ -144,5 +144,57 @@ describe('CodeEditor indentation', () => {
 
   it('does not indent at the top level', () => {
     expect(enterAfter('a {\n}')).toBe('a {\n}\n')
+  })
+})
+
+describe('CodeEditor folding', () => {
+  it('shows a fold control in the margin', () => {
+    const { container } = render(CodeEditor, { value: 'a {\n\tb\n}', label: 'Caddyfile' })
+    expect(container.querySelector('.cm-foldGutter')).not.toBeNull()
+  })
+
+  it('can fold a block from its opening line, leaving the closing brace in view', () => {
+    const { container } = render(CodeEditor, { value: 'a {\n\tb\n}', label: 'Caddyfile' })
+    const state = viewOf(container).state
+    expect(foldable(state, 0, 3)).toEqual({ from: 3, to: 7 })
+  })
+
+  it('cannot fold a line that opens no block', () => {
+    const { container } = render(CodeEditor, { value: 'a {\n\tb\n}', label: 'Caddyfile' })
+    expect(foldable(viewOf(container).state, 4, 6)).toBeNull()
+  })
+})
+
+describe('CodeEditor changes against the baseline', () => {
+  const kinds = (container) => Array.from(container.querySelectorAll('.cm-change-marker')).map((m) => m.dataset.kind)
+
+  it('marks nothing without a baseline', () => {
+    const { container } = render(CodeEditor, { value: 'a\nb', label: 'Caddyfile' })
+    expect(kinds(container)).toEqual([])
+  })
+
+  it('marks nothing while the text is the baseline', () => {
+    const { container } = render(CodeEditor, { value: 'a\nb', label: 'Caddyfile', baseline: 'a\nb' })
+    expect(kinds(container)).toEqual([])
+  })
+
+  it('marks a line that was added or changed', () => {
+    const { container } = render(CodeEditor, { value: 'a\nB\nc', label: 'Caddyfile', baseline: 'a\nb\nc' })
+    expect(kinds(container)).toEqual(['added'])
+  })
+
+  it('marks where lines were removed', () => {
+    const { container } = render(CodeEditor, { value: 'a\nc', label: 'Caddyfile', baseline: 'a\nb\nc' })
+    expect(kinds(container)).toEqual(['removed'])
+  })
+
+  it('follows the text as it is edited and the baseline as it moves', async () => {
+    const { container, rerender } = render(CodeEditor, { value: 'a\nb', label: 'Caddyfile', baseline: 'a\nb' })
+    viewOf(container).dispatch({ changes: { from: 3, insert: 'c' } })
+    expect(kinds(container)).toEqual(['added'])
+    await rerender({ value: 'a\nb', label: 'Caddyfile', baseline: 'a' })
+    expect(kinds(container)).toEqual(['added'])
+    await rerender({ value: 'a\nb', label: 'Caddyfile', baseline: 'a\nbc' })
+    expect(kinds(container)).toEqual([])
   })
 })
