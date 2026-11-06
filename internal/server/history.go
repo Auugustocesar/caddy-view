@@ -249,6 +249,15 @@ func (t *totals) p95Ms() *float64 {
 	return millis(store.LatencyQuantile(t.latency, 0.95))
 }
 
+// errorRate is the share of requests that were 5xx, or nil without requests.
+func (t *totals) errorRate() *float64 {
+	if t.requests == 0 {
+		return nil
+	}
+	rate := float64(t.status[5]) / float64(t.requests)
+	return &rate
+}
+
 // fetchTraffic reads the buckets that start in [from, to), a few thousand at a time so that a long range cannot
 // exceed the row limit of the store.
 func (a *api) fetchTraffic(ctx context.Context, res store.Resolution, width time.Duration, from, to time.Time, host string) ([]store.TrafficBucket, error) {
@@ -373,19 +382,19 @@ func (a *api) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, width := store.PerMinute, time.Minute
-	if window > longestMinuteWindow {
-		res, width = store.PerHour, time.Hour
-	}
+	res, width := windowResolution(window)
 	now := a.currentTime()
-	rows, err := a.fetchTraffic(r.Context(), res, width, now.Add(-window).Truncate(width), now, "")
+	t, err := a.periodTotals(r.Context(), res, width, now.Add(-window), now)
 	if err != nil {
 		a.fail(w, r, err)
 		return
 	}
-	var t totals
-	for _, row := range rows {
-		t.add(row)
+	// The period before, of the same length, is what the figures are compared with. It ends where the bucket that holds
+	// the start of this period begins, so that no bucket is counted in both.
+	prev, err := a.periodTotals(r.Context(), res, width, now.Add(-2*window), now.Add(-window).Truncate(width))
+	if err != nil {
+		a.fail(w, r, err)
+		return
 	}
 
 	inFlight, err := a.inFlight(r.Context(), now)
@@ -399,16 +408,36 @@ func (a *api) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var errorRate *float64
-	if t.requests > 0 {
-		rate := float64(t.status[5]) / float64(t.requests)
-		errorRate = &rate
-	}
+	errorRate := t.errorRate()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"window": name, "requests": t.requests, "requestsPerSecond": float64(t.requests) / window.Seconds(),
 		"errors5xx": t.status[5], "errorRate": errorRate, "avgMs": t.avgMs(), "p95Ms": t.p95Ms(),
 		"bytes": t.bytes, "status": t.statusJSON(), "inFlight": inFlight, "upstreams": upstreams,
+		"previous": map[string]any{
+			"requests": prev.requests, "errors5xx": prev.status[5], "errorRate": prev.errorRate(), "avgMs": prev.avgMs(), "p95Ms": prev.p95Ms(),
+		},
 	})
+}
+
+// windowResolution is the rollup that answers a summary window: minutes up to longestMinuteWindow, hours beyond it.
+func windowResolution(window time.Duration) (store.Resolution, time.Duration) {
+	if window > longestMinuteWindow {
+		return store.PerHour, time.Hour
+	}
+	return store.PerMinute, time.Minute
+}
+
+// periodTotals adds up the traffic of every host in [from, to). The bucket that holds the start counts whole.
+func (a *api) periodTotals(ctx context.Context, res store.Resolution, width time.Duration, from, to time.Time) (totals, error) {
+	rows, err := a.fetchTraffic(ctx, res, width, from.Truncate(width), to, "")
+	if err != nil {
+		return totals{}, err
+	}
+	var t totals
+	for _, row := range rows {
+		t.add(row)
+	}
+	return t, nil
 }
 
 // newest returns the latest value of every series of a metric within the freshness window, or nil when there is none.

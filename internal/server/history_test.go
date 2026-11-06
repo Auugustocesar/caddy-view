@@ -553,3 +553,49 @@ func TestSummaryIgnoresMetricsThatAreTooOld(t *testing.T) {
 		t.Errorf("inFlight = %v, want null: the only sample is ten minutes old", *got.InFlight)
 	}
 }
+
+func TestSummaryCarriesThePreviousPeriod(t *testing.T) {
+	m := store.NewMemory()
+	seedBusyMinute(t, m) // 30 minutes ago: this hour
+	seed(t, m,
+		req("a.example.com", 200, clock.Add(-90*time.Minute), 10*time.Millisecond, 5),
+		req("a.example.com", 502, clock.Add(-91*time.Minute), 20*time.Millisecond, 5),
+		req("a.example.com", 200, clock.Add(-3*time.Hour), 10*time.Millisecond, 5), // two periods back: not counted
+	)
+	var got struct {
+		Previous *struct {
+			Requests  int64    `json:"requests"`
+			Errors5xx int64    `json:"errors5xx"`
+			ErrorRate *float64 `json:"errorRate"`
+			P95Ms     *float64 `json:"p95Ms"`
+		} `json:"previous"`
+	}
+	_, body := get(t, historyHandler(t, m), "/api/summary", nil)
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	p := got.Previous
+	if p == nil {
+		t.Fatalf("no previous in %s", body)
+	}
+	if p.Requests != 2 || p.Errors5xx != 1 || p.ErrorRate == nil || !near(*p.ErrorRate, 0.5) || p.P95Ms == nil {
+		t.Errorf("previous = %+v, want 2 requests, 1 5xx, rate 0.5 and a p95", p)
+	}
+}
+
+func TestSummaryPreviousWithoutTrafficHasNullRates(t *testing.T) {
+	var got struct {
+		Previous struct {
+			Requests  int64    `json:"requests"`
+			ErrorRate *float64 `json:"errorRate"`
+			P95Ms     *float64 `json:"p95Ms"`
+		} `json:"previous"`
+	}
+	_, body := get(t, historyHandler(t, store.NewMemory()), "/api/summary", nil)
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Previous.Requests != 0 || got.Previous.ErrorRate != nil || got.Previous.P95Ms != nil {
+		t.Errorf("previous = %+v, want zeros and nulls", got.Previous)
+	}
+}

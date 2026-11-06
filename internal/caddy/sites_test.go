@@ -356,3 +356,41 @@ func TestExtractSitesToleratesMalformedSubroutes(t *testing.T) {
 		})
 	}
 }
+
+func TestCountHealthChecks(t *testing.T) {
+	proxy := func(extra string) string {
+		return `{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.1:80"}]` + extra + `}`
+	}
+	tests := []struct {
+		name         string
+		handles      string
+		wantProxies  int
+		wantWithTest int
+	}{
+		{"no proxies", `{"handler":"static_response"}`, 0, 0},
+		{"a proxy without checks", proxy(``), 1, 0},
+		{"active checks", proxy(`,"health_checks":{"active":{"uri":"/health"}}`), 1, 1},
+		{"passive checks", proxy(`,"health_checks":{"passive":{"fail_duration":30000000000}}`), 1, 1},
+		{"an empty health_checks object is no check", proxy(`,"health_checks":{}`), 1, 0},
+		{"one with and one without", proxy(`,"health_checks":{"active":{"uri":"/"}}`) + `,` + proxy(``), 2, 1},
+		{"a proxy inside a subroute", `{"handler":"subroute","routes":[{"handle":[` + proxy(``) + `]}]}`, 1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := map[string]any{}
+			raw := `{"apps":{"http":{"servers":{"srv0":{"routes":[{"match":[{"host":["a.example.com"]}],"handle":[` + tt.handles + `]}]}}}}}`
+			if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			proxies, withChecks := CountHealthChecks(cfg)
+			if proxies != tt.wantProxies || withChecks != tt.wantWithTest {
+				t.Errorf("CountHealthChecks = %d, %d; want %d, %d", proxies, withChecks, tt.wantProxies, tt.wantWithTest)
+			}
+		})
+	}
+	t.Run("an empty configuration", func(t *testing.T) {
+		if p, w := CountHealthChecks(map[string]any{}); p != 0 || w != 0 {
+			t.Errorf("CountHealthChecks = %d, %d; want 0, 0", p, w)
+		}
+	})
+}

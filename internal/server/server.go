@@ -141,6 +141,7 @@ func New(c Caddy, opts Options) http.Handler {
 		routes["/api/traffic"] = onGet(a.traffic)
 		routes["/api/hosts"] = onGet(a.hosts)
 		routes["/api/summary"] = onGet(a.summary)
+		routes["/api/attention"] = onGet(a.attention)
 	}
 	if opts.Sites != nil {
 		routes["/api/managed-sites"] = onGet(a.sitesList).with(http.MethodPost, a.sitesCreate)
@@ -368,6 +369,7 @@ func (a *api) sites(w http.ResponseWriter, r *http.Request) {
 	}
 
 	extracted := caddy.ExtractSites(cfg)
+	proxies, withChecks := caddy.CountHealthChecks(cfg)
 	sites := make([]siteJSON, 0, len(extracted))
 	for _, s := range extracted {
 		site := siteJSON{Server: s.Server, Host: s.Host, Upstreams: make([]upstreamJSON, 0, len(s.Upstreams))}
@@ -381,6 +383,7 @@ func (a *api) sites(w http.ResponseWriter, r *http.Request) {
 		"sites":              sites,
 		"upstreamsAvailable": upsErr == nil,
 		"upstreamCheck":      a.opts.UpstreamHealth != nil,
+		"healthChecks":       map[string]int{"proxies": proxies, "withChecks": withChecks},
 	})
 }
 

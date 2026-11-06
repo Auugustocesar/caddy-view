@@ -148,3 +148,35 @@ func appendUnique(list []string, items ...string) []string {
 	}
 	return list
 }
+
+// CountHealthChecks counts the reverse proxy handlers of a running configuration, and how many of them have health
+// checks of Caddy's own, active or passive. Without them Caddy keeps sending visitors to an upstream that is down.
+func CountHealthChecks(cfg map[string]any) (proxies, withChecks int) {
+	servers := cfgpath.Map(cfgpath.Get(cfg, "apps", "http", "servers"))
+	for _, srv := range servers {
+		for _, r := range cfgpath.List(cfgpath.Map(srv)["routes"]) {
+			p, w := routeHealthChecks(r)
+			proxies, withChecks = proxies+p, withChecks+w
+		}
+	}
+	return proxies, withChecks
+}
+
+func routeHealthChecks(route any) (proxies, withChecks int) {
+	for _, h := range cfgpath.List(cfgpath.Get(route, "handle")) {
+		switch cfgpath.Get(h, "handler") {
+		case "reverse_proxy":
+			proxies++
+			hc := cfgpath.Map(cfgpath.Get(h, "health_checks"))
+			if len(cfgpath.Map(hc["active"])) > 0 || len(cfgpath.Map(hc["passive"])) > 0 {
+				withChecks++
+			}
+		case "subroute":
+			for _, r := range cfgpath.List(cfgpath.Get(h, "routes")) {
+				p, w := routeHealthChecks(r)
+				proxies, withChecks = proxies+p, withChecks+w
+			}
+		}
+	}
+	return proxies, withChecks
+}

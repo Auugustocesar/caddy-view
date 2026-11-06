@@ -30,6 +30,10 @@ type checkedSiteBody struct {
 type checkedSitesResponse struct {
 	Sites         []checkedSiteBody `json:"sites"`
 	UpstreamCheck bool              `json:"upstreamCheck"`
+	HealthChecks  *struct {
+		Proxies    int `json:"proxies"`
+		WithChecks int `json:"withChecks"`
+	} `json:"healthChecks"`
 }
 
 func healthHandler(f *fakeCaddy, h UpstreamHealth) http.Handler {
@@ -126,5 +130,18 @@ func TestSitesCarryTheStatusTheCheckSaw(t *testing.T) {
 	}
 	if s := got.Sites[1].Upstreams[0].HTTPStatus; s != nil {
 		t.Errorf("httpStatus = %v, want none for an upstream that did not answer", *s)
+	}
+}
+
+func TestSitesSayHowManyProxiesHaveHealthChecks(t *testing.T) {
+	cfg := `{"apps":{"http":{"servers":{"srv0":{"routes":[
+		{"match":[{"host":["a.example.com"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.5:8080"}],"health_checks":{"active":{"uri":"/"}}}]},
+		{"match":[{"host":["b.example.com"]}],"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"10.0.0.6:9090"}]}]}
+	]}}}}}`
+	var got checkedSitesResponse
+	decode(t, do(t, healthHandler(&fakeCaddy{cfg: parse(t, cfg)}, nil), http.MethodGet, "/api/sites"), &got)
+
+	if got.HealthChecks == nil || got.HealthChecks.Proxies != 2 || got.HealthChecks.WithChecks != 1 {
+		t.Errorf("healthChecks = %+v, want 2 proxies, 1 with checks", got.HealthChecks)
 	}
 }
