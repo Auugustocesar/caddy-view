@@ -177,6 +177,7 @@ Flags:
 | `--allow-edit` | off | Let the API read and change the Caddyfile. Needs `--caddyfile` and the history database (not `--no-persist`) |
 | `--managed-file` | `conf.d/caddy-view-sites.caddy` | The file the managed sites are written to, relative to the directory of the Caddyfile unless it is an absolute path. The Caddyfile must import it by its full path |
 | `--backup-mode` | `full` | `full`: every revision keeps the Caddyfile, so it can be restored. `sites-only`: caddy-view never writes the Caddyfile and keeps no copy of it (it can hold tokens and passwords); only the managed file and the list of sites are versioned and rolled back, you add the `import` line by hand, and the Caddyfile tab is read-only. Needs `--allow-edit` |
+| `--no-upstream-check` | off | Do not ask the upstreams of your sites whether they answer. By default caddy-view sends a `GET /` to each one every 10 seconds (no credentials, no redirects, 2 s timeout) and `/api/sites` reports `answering`, `down` or `unknown` for it. Caddy does not know on its own: without health checks it reports a stopped upstream as healthy |
 
 ### Editing the Caddyfile
 

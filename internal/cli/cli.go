@@ -25,6 +25,7 @@ import (
 	"github.com/Auugustocesar/caddy-view/internal/scrape"
 	"github.com/Auugustocesar/caddy-view/internal/server"
 	"github.com/Auugustocesar/caddy-view/internal/store"
+	"github.com/Auugustocesar/caddy-view/internal/upstreamcheck"
 	"github.com/Auugustocesar/caddy-view/internal/web"
 )
 
@@ -245,6 +246,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	managedFile := fs.String("managed-file", "conf.d/caddy-view-sites.caddy", "file caddy-view writes the sites it manages to, relative to the Caddyfile directory; the Caddyfile must import it by its full path")
 	allowEdit := fs.Bool("allow-edit", false, "let the UI and API read and change the Caddyfile; needs --caddyfile and the history database")
 	backupMode := fs.String("backup-mode", server.BackupFull, "what the history keeps of the Caddyfile: full, or sites-only, where caddy-view never writes the Caddyfile and keeps no copy of it; needs --allow-edit")
+	noUpstreamCheck := fs.Bool("no-upstream-check", false, "do not ask the upstreams of your sites whether they answer; without it caddy-view sends a GET / to each one every 10 seconds")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -344,6 +346,15 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		sitesOnly := *backupMode == server.BackupSitesOnly
 		ed := newEditor(ctx, client, hist, path, managed, *accessLog, sitesOnly, logger)
 		opts.Editor, opts.Sites, opts.CaddyfilePath, opts.BackupMode = ed, ed, path, *backupMode
+	}
+	if !*noUpstreamCheck {
+		monitor := upstreamcheck.NewMonitor(&upstreamcheck.Checker{}, siteUpstreams(client), upstreamcheck.MonitorOptions{Logger: logger})
+		opts.UpstreamHealth = monitor
+		stopCheck := background(ctx, func(ctx context.Context) {
+			// Run only returns the error of the cancelled context.
+			_ = monitor.Run(ctx)
+		})
+		defer stopCheck()
 	}
 	handler := server.New(client, opts)
 	// Registered after the store's Close, so it runs first: ingestion must stop before the store goes away.
@@ -450,6 +461,23 @@ func (d databaseInfo) Info(ctx context.Context) (server.DatabaseInfo, error) {
 		}
 	}
 	return info, nil
+}
+
+// siteUpstreams lists the upstream addresses of the sites in the running Caddy configuration.
+func siteUpstreams(client *caddy.Client) func(ctx context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		cfg, err := client.Config(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var addrs []string
+		for _, s := range caddy.ExtractSites(cfg) {
+			addrs = append(addrs, s.Upstreams...)
+		}
+		return addrs, nil
+	}
 }
 
 // startScrape copies Caddy's metrics into the history in the background and returns a function that stops it and

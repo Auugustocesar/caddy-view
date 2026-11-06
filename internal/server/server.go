@@ -16,12 +16,19 @@ import (
 	"github.com/Auugustocesar/caddy-view/internal/caddy"
 	"github.com/Auugustocesar/caddy-view/internal/netutil"
 	"github.com/Auugustocesar/caddy-view/internal/redact"
+	"github.com/Auugustocesar/caddy-view/internal/upstreamcheck"
 )
 
 // Caddy is what the API needs from the Admin API client.
 type Caddy interface {
 	Config(ctx context.Context) (map[string]any, error)
 	Upstreams(ctx context.Context) ([]caddy.Upstream, error)
+}
+
+// UpstreamHealth is what the API needs from the upstream check: the latest result for an address, and false when that
+// address has not been checked.
+type UpstreamHealth interface {
+	Result(address string) (upstreamcheck.Result, bool)
 }
 
 // The backup modes of Options.BackupMode, as /api/system says them.
@@ -62,6 +69,9 @@ type Options struct {
 	Ingest   IngestStatus
 	Scrape   ScrapeStatus
 	Database Database
+	// UpstreamHealth gives the result of the upstream check shown by /api/sites. When nil, the check is off and every
+	// upstream is reported as unknown.
+	UpstreamHealth UpstreamHealth
 	// Retention is reported by /api/system when not nil.
 	Retention *Retention
 	// BackupMode is BackupFull (the default, also when empty) or BackupSitesOnly. In the sites-only mode the routes that
@@ -304,6 +314,35 @@ type upstreamJSON struct {
 	Address     string `json:"address"`
 	NumRequests int    `json:"numRequests"`
 	Fails       int    `json:"fails"`
+	// State is the result of the upstream check: answering, down or unknown.
+	State upstreamcheck.State `json:"state"`
+	// HTTPStatus is the status the upstream answered with, which a health check of Caddy's own would judge.
+	HTTPStatus int `json:"httpStatus,omitempty"`
+	// LatencyMs is how long an answering upstream took, in milliseconds.
+	LatencyMs *float64 `json:"latencyMs,omitempty"`
+	// CheckedAt is when the check last ran, in RFC 3339, and is left out before the first check.
+	CheckedAt *time.Time `json:"checkedAt,omitempty"`
+}
+
+// checked adds the result of the upstream check to u.
+func (a *api) checked(u upstreamJSON) upstreamJSON {
+	u.State = upstreamcheck.Unknown
+	if a.opts.UpstreamHealth == nil {
+		return u
+	}
+	r, ok := a.opts.UpstreamHealth.Result(u.Address)
+	if !ok {
+		return u
+	}
+	u.State = r.State
+	u.HTTPStatus = r.Status
+	at := r.CheckedAt
+	u.CheckedAt = &at
+	if r.State == upstreamcheck.Answering {
+		ms := float64(r.Latency) / float64(time.Millisecond)
+		u.LatencyMs = &ms
+	}
+	return u
 }
 
 type siteJSON struct {
@@ -334,11 +373,15 @@ func (a *api) sites(w http.ResponseWriter, r *http.Request) {
 		site := siteJSON{Server: s.Server, Host: s.Host, Upstreams: make([]upstreamJSON, 0, len(s.Upstreams))}
 		for _, addr := range s.Upstreams {
 			u := state[addr]
-			site.Upstreams = append(site.Upstreams, upstreamJSON{Address: addr, NumRequests: u.NumRequests, Fails: u.Fails})
+			site.Upstreams = append(site.Upstreams, a.checked(upstreamJSON{Address: addr, NumRequests: u.NumRequests, Fails: u.Fails}))
 		}
 		sites = append(sites, site)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sites": sites, "upstreamsAvailable": upsErr == nil})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sites":              sites,
+		"upstreamsAvailable": upsErr == nil,
+		"upstreamCheck":      a.opts.UpstreamHealth != nil,
+	})
 }
 
 // badGateway logs why Caddy could not be read, so the cause is visible to the operator and not only to the
