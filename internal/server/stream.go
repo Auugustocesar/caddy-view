@@ -72,7 +72,8 @@ func (a *api) logStream(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer close(done)
 		defer close(lines)
-		tail.Run(ctx, func(line string) {
+		// Run ends when the request context does; that is the only way this tailer stops, so its error says nothing new.
+		_ = tail.Run(ctx, func(line string) {
 			select {
 			case lines <- line:
 			case <-ctx.Done():

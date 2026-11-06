@@ -65,11 +65,11 @@ func Acquire(ctx context.Context, path string) (*Lock, error) {
 	if err == nil {
 		_, err = conn.ExecContext(ctx, "BEGIN EXCLUSIVE")
 		if err != nil {
-			conn.Close() // the error that matters is the one from BEGIN
+			_ = conn.Close() // the error that matters is the one from BEGIN
 		}
 	}
 	if err != nil {
-		db.Close() // same
+		_ = db.Close() // same
 		if isBusy(err) {
 			return nil, ErrBusy
 		}

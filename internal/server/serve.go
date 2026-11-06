@@ -77,7 +77,7 @@ func Serve(ctx context.Context, addr string, h http.Handler, onListen func(net.A
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		srv.Close()
+		_ = srv.Close() // the shutdown error is the one worth reporting
 		return fmt.Errorf("shut down: %w", err)
 	}
 	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {

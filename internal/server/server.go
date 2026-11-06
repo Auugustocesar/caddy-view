@@ -325,7 +325,8 @@ func (a *api) badGateway(w http.ResponseWriter, r *http.Request, err error) {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	// The status is sent already: a failed write means the client has gone, and there is no one to tell.
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

@@ -1,0 +1,30 @@
+version: "2"
+linters:
+  # The defaults (errcheck, govet, ineffassign, staticcheck, unused) plus the two that enforce rules of CLAUDE.md and
+  # catch leaks: errors compared and wrapped with errors.Is, errors.As and %w, and HTTP response bodies left open.
+  enable:
+    - errorlint
+    - bodyclose
+  settings:
+    errcheck:
+      # The error of these calls has nothing to act on: a failed write to the terminal, closing what was only read,
+      # and rolling back a transaction that has already ended. A write that matters is checked where it is made.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (*os.File).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Tx).Rollback
+  exclusions:
+    rules:
+      # A test fails through its assertions: a Close in a cleanup, or a handler writing to a test server, has no
+      # error to act on.
+      - path: _test\.go$
+        linters: [errcheck]
+      - path: internal/store/storetest/
+        linters: [errcheck]

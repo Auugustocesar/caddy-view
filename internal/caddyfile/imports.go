@@ -56,12 +56,12 @@ type token struct {
 func tokenize(line string) []token {
 	var out []token
 	for i := 0; i < len(line); {
-		switch c := line[i]; {
-		case c == ' ' || c == '\t':
+		switch c := line[i]; c {
+		case ' ', '\t':
 			i++
-		case c == '#':
+		case '#':
 			return out
-		case c == '"' || c == '`':
+		case '"', '`':
 			var b strings.Builder
 			i++
 			for i < len(line) && line[i] != c {
