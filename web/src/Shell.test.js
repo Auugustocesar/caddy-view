@@ -16,6 +16,7 @@ const summary = {
   inFlight: null,
   upstreams: null,
 }
+let attentionItems = []
 const traffic = {
   resolution: 'hour',
   bucketSeconds: 3600,
@@ -48,7 +49,15 @@ function fakeFetch(url) {
     case '/api/managed-sites':
       return Promise.resolve(json({ sites: [], managedFile: '/etc/caddy/conf.d/sites.caddy', imported: true, accessLog: false }))
     case '/api/summary?window=24h':
+    case '/api/summary?window=7d':
+    case '/api/summary?window=1h':
       return Promise.resolve(json(summary))
+    case '/api/attention?window=24h':
+    case '/api/attention?window=7d':
+    case '/api/attention?window=1h':
+      return Promise.resolve(json({ window: '24h', items: attentionItems }))
+    case '/api/traffic?resolution=minute':
+      return Promise.resolve(json({ ...traffic, resolution: 'minute', bucketSeconds: 60 }))
     case '/api/traffic?resolution=hour':
       return Promise.resolve(json(traffic))
     default:
@@ -74,6 +83,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  attentionItems = []
   vi.unstubAllGlobals()
   window.history.replaceState({}, '', '/')
   document.documentElement.removeAttribute('data-theme')
@@ -133,7 +143,7 @@ describe('App screens', () => {
   it('loads the dashboard from the API', async () => {
     openAt('/')
     expect(await screen.findByText(/Caddy is reachable/)).toBeTruthy()
-    expect(await screen.findByText('No sites found')).toBeTruthy()
+    expect(await screen.findByText(/no upstreams in caddy/i)).toBeTruthy()
   })
 
   it('shows an error when the API cannot be read', async () => {
@@ -297,6 +307,34 @@ describe('App dashboard history', () => {
     const requests = await screen.findByRole('group', { name: 'Requests' })
     expect(requests.textContent).toContain('12')
     expect((await screen.findByRole('img')).getAttribute('aria-label')).toContain('Requests per hour')
+  })
+
+  it('lists what needs attention', async () => {
+    attentionItems = [{ kind: 'host_slow', severity: 'warn', host: 'slow.example.com', p95Ms: 640, medianP95Ms: 71 }]
+    openAt('/')
+    expect(await screen.findByText('slow.example.com is slow')).toBeTruthy()
+  })
+
+  it('asks again for another range, by the minute for one hour', async () => {
+    openAt('/')
+    await screen.findByRole('group', { name: 'Requests' })
+    await fireEvent.click(screen.getByRole('radio', { name: '1h' }))
+    await vi.waitFor(() => {
+      const urls = fetch.mock.calls.map((c) => c[0])
+      expect(urls).toContain('/api/summary?window=1h')
+      expect(urls).toContain('/api/attention?window=1h')
+      expect(urls).toContain('/api/traffic?resolution=minute')
+    })
+    expect(screen.getByRole('radio', { name: '1h' }).getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('shows the dashboard without the attention list when it cannot be read', async () => {
+    const base = fakeFetch
+    vi.stubGlobal('fetch', vi.fn((url) => (url.startsWith('/api/attention') ? Promise.reject(new TypeError('boom')) : base(url))))
+    openAt('/')
+    expect(await screen.findByRole('group', { name: 'Requests' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('says the history is off when its routes are not there', async () => {

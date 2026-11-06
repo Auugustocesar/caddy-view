@@ -223,9 +223,8 @@
   }
   h1 {
     margin: 0;
-    font-size: 2.1rem;
-    font-weight: 300;
-    letter-spacing: -0.02em;
+    font: 600 clamp(2.2rem, 4.5vw, 3rem) / 1.05 var(--display);
+    letter-spacing: -0.03em;
   }
   h2 {
     margin: 0 0 0.5rem;

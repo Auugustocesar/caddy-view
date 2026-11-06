@@ -28,11 +28,11 @@ const (
 	htmlType    = "text/html; charset=utf-8"
 )
 
-// The policy lets the page load only its own script and style, and talk only to its own origin. Nothing in the UI
+// The policy lets the page load only its own script, style and fonts, and talk only to its own origin. Nothing in the UI
 // needs more, and it keeps a stray log line or config value from becoming a script. The one addition is a nonce for
 // style: the code editor puts <style> elements in the page, and a nonce that is new with every response admits
 // those and no other inline style. %s is where it goes.
-const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self' 'nonce-%s'; connect-src 'self'; " +
+const contentSecurityPolicy = "default-src 'none'; script-src 'self'; style-src 'self' 'nonce-%s'; connect-src 'self'; font-src 'self'; " +
 	"img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
 // noncePlaceholder is what index.html holds where the nonce goes; the page reads it from a <meta> tag.

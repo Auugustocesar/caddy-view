@@ -115,7 +115,7 @@ func TestEveryResponseCarriesTheSecurityHeaders(t *testing.T) {
 			h := get(t, http.MethodGet, path).Header()
 			csp := h.Get("Content-Security-Policy")
 			for _, want := range []string{
-				"default-src 'none'", "script-src 'self'", "style-src 'self'", "connect-src 'self'",
+				"default-src 'none'", "script-src 'self'", "style-src 'self'", "connect-src 'self'", "font-src 'self'",
 				"base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
 			} {
 				if !strings.Contains(csp, want) {

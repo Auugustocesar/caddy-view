@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, getHosts, getLogs, getTraffic } from './api.js'
+import { ApiError, getAttention, getHosts, getLogs, getTraffic } from './api.js'
 
 function respond(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -104,5 +104,19 @@ describe('getLogs', () => {
   it('answers 404 when the history is off', async () => {
     fetchOf({ error: 'not found' }, 404)
     expect((await getLogs().catch((e) => e)).status).toBe(404)
+  })
+})
+
+describe('getAttention', () => {
+  it('asks for the window it is given', async () => {
+    const fetchMock = fetchOf({ window: '7d', items: [] })
+    const body = await getAttention('7d')
+    expect(urlOf(fetchMock)).toBe('/api/attention?window=7d')
+    expect(body.items).toEqual([])
+  })
+
+  it('answers 404 as an ApiError when the history is off', async () => {
+    fetchOf({ error: 'not found' }, 404)
+    await expect(getAttention('1h')).rejects.toMatchObject({ status: 404 })
   })
 })

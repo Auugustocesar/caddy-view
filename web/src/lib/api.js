@@ -134,7 +134,7 @@ export function getStatus() {
   return get('/api/status')
 }
 
-/** @returns {Promise<{sites: Array<{server: string, host: string, upstreams: Array<{address: string, numRequests: number, fails: number}>}>, upstreamsAvailable: boolean}>} */
+/** @returns {Promise<{sites: Array<{server: string, host: string, upstreams: Array<{address: string, numRequests: number, fails: number, state?: 'answering'|'down'|'unknown', latencyMs?: number, httpStatus?: number, checkedAt?: string}>}>, upstreamsAvailable: boolean, upstreamCheck?: boolean, healthChecks?: {proxies: number, withChecks: number}}>} */
 export function getSites() {
   return get('/api/sites')
 }
@@ -147,10 +147,20 @@ export function getConfig() {
 /**
  * Totals for a window (5m, 1h, 6h, 24h or 7d). Answers 404 when the history is off.
  * @param {string} window
- * @returns {Promise<{window: string, requests: number, requestsPerSecond: number, errors5xx: number, errorRate: number|null, avgMs: number|null, p95Ms: number|null, bytes: number, status: Record<string, number>, inFlight: number|null, upstreams: {healthy: number, total: number}|null}>}
+ * @returns {Promise<{window: string, requests: number, requestsPerSecond: number, errors5xx: number, errorRate: number|null, avgMs: number|null, p95Ms: number|null, bytes: number, status: Record<string, number>, inFlight: number|null, upstreams: {healthy: number, total: number}|null, previous: {requests: number, errors5xx: number, errorRate: number|null, avgMs: number|null, p95Ms: number|null}}>}
  */
 export function getSummary(window) {
   return get(`/api/summary?window=${encodeURIComponent(window)}`)
+}
+
+/**
+ * What needs a look over a window (1h, 6h, 24h or 7d): hosts with more errors than before, hosts far slower than the
+ * others, and upstreams that do not answer. Answers 404 when the history is off.
+ * @param {string} window
+ * @returns {Promise<{window: string, items: Array<object>}>}
+ */
+export function getAttention(window) {
+  return get(`/api/attention?window=${encodeURIComponent(window)}`)
 }
 
 /**

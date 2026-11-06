@@ -29,26 +29,24 @@
 <style>
   .segmented {
     display: inline-flex;
-    gap: 0.15rem;
-    padding: 0.2rem;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--line2);
     border-radius: 999px;
-    background: var(--surface-2);
   }
   button {
-    padding: 0.3rem 0.85rem;
+    padding: 0.3rem 0.9rem;
     border: 0;
     border-radius: 999px;
     background: transparent;
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 0.9rem;
   }
   button:hover {
     color: var(--text);
   }
   button[aria-checked='true'] {
-    background: var(--surface);
-    color: var(--text);
-    font-weight: 600;
-    box-shadow: var(--shadow);
+    background: var(--text);
+    color: var(--bg);
   }
 </style>

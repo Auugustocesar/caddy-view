@@ -1,80 +1,134 @@
 /*
- * The design system: colour, radius, shadow and type are custom properties. Light is the default; dark follows the
- * system unless the user picked a theme, which `data-theme` on <html> then forces (see lib/theme.js). The dark values
- * are written twice because CSS cannot share one block between a media query and an attribute selector.
+ * The design system: colour, radius and type are custom properties. Dark is the way it was drawn, light follows the
+ * system unless the user picked a theme, which `data-theme` on <html> then forces (see lib/theme.js). The values are
+ * written twice because CSS cannot share one block between a media query and an attribute selector.
+ *
+ * One orange accent on a warm neutral ground, one strong surface per screen, hairlines instead of boxes. The type is
+ * Bricolage Grotesque for titles and figures, Geist for text and Geist Mono for labels, all served by caddy-view itself
+ * (latin only), so the UI loads nothing from another host.
  */
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/bricolage-grotesque/files/bricolage-grotesque-latin-wght-normal.woff2') format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Geist';
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2') format('woff2-variations');
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../node_modules/@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2') format('woff2-variations');
+}
+
 :root {
-  --bg: #f3efe6;
-  --surface: #faf7f0;
-  --surface-2: #ebe5d8;
-  --text: #2a2620;
-  --muted: #6f6759;
-  --border: #e0d9ca;
-  --accent: #4a3df5;
-  --accent-text: #ffffff;
-  --ok: #1f7a3d;
-  --warn: #946200;
-  --bad: #c4352c;
-  --shadow: 0 1px 2px rgb(60 45 20 / 0.06), 0 8px 24px rgb(60 45 20 / 0.07);
-  --syn-comment: #8a8171;
-  --syn-string: #9a5b13;
-  --syn-keyword: #4a3df5;
-  --syn-heading: #11708e;
+  --bg: #f6f2ec;
+  --surface: #fdfbf8;
+  --surface-2: #ece6dd;
+  --text: #1b1713;
+  --muted: #675f56;
+  --faint: #9a9188;
+  --border: rgb(27 23 19 / 0.12);
+  --line2: rgb(27 23 19 / 0.22);
+  --accent: #e5610a;
+  --accent-soft: rgb(229 97 10 / 0.12);
+  --accent-text: #1f0f03;
+  --ok: #0c7a52;
+  --warn: #8a5200;
+  --bad: #c4283f;
+  --info: #0b62a0;
+  --ok-soft: rgb(12 122 82 / 0.12);
+  --warn-soft: rgb(138 82 0 / 0.13);
+  --bad-soft: rgb(196 40 63 / 0.1);
+  --info-soft: rgb(11 98 160 / 0.12);
+  --shadow: none;
+  --syn-comment: #9a9188;
+  --syn-string: #0c7a52;
+  --syn-keyword: #c2540a;
+  --syn-heading: #0b62a0;
   --syn-variable: #a3398f;
-  --syn-label: #b5532a;
+  --syn-label: #8a5200;
   --syn-type: #7a4fb0;
   --radius: 10px;
-  --radius-lg: 20px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-lg: 22px;
+  --display: 'Bricolage Grotesque', 'Geist', system-ui, sans-serif;
+  --sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --bg: #1a1713;
-    --surface: #24201b;
-    --surface-2: #2e2923;
-    --text: #efe9dd;
-    --muted: #a39a8a;
-    --border: #38322a;
-    --accent: #8f8aff;
-    --accent-text: #14122b;
-    --ok: #4cc26d;
-    --warn: #e0a63b;
-    --bad: #f26b5e;
-    --syn-comment: #8b8272;
-    --syn-string: #e0b074;
-    --syn-keyword: #a9a5ff;
-    --syn-heading: #6fd0e8;
+    --bg: #0e0d0c;
+    --surface: #181614;
+    --surface-2: #211e1b;
+    --text: #f6f1ea;
+    --muted: #a8a097;
+    --faint: #6f685f;
+    --border: rgb(255 244 232 / 0.11);
+    --line2: rgb(255 244 232 / 0.2);
+    --accent: #ff8a2b;
+    --accent-soft: rgb(255 138 43 / 0.15);
+    --accent-text: #1f0f03;
+    --ok: #5bd9a0;
+    --warn: #f5c451;
+    --bad: #ff6b7a;
+    --info: #6cc4f5;
+    --ok-soft: rgb(91 217 160 / 0.13);
+    --warn-soft: rgb(245 196 81 / 0.13);
+    --bad-soft: rgb(255 107 122 / 0.13);
+    --info-soft: rgb(108 196 245 / 0.13);
+    --syn-comment: #6f685f;
+    --syn-string: #5bd9a0;
+    --syn-keyword: #ff8a2b;
+    --syn-heading: #6cc4f5;
     --syn-variable: #e58ad2;
-    --syn-label: #f0a070;
+    --syn-label: #f5c451;
     --syn-type: #c3a2f0;
-    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
     color-scheme: dark;
   }
 }
 
 :root[data-theme='dark'] {
-  --syn-comment: #8b8272;
-  --syn-string: #e0b074;
-  --syn-keyword: #a9a5ff;
-  --syn-heading: #6fd0e8;
+  --bg: #0e0d0c;
+  --surface: #181614;
+  --surface-2: #211e1b;
+  --text: #f6f1ea;
+  --muted: #a8a097;
+  --faint: #6f685f;
+  --border: rgb(255 244 232 / 0.11);
+  --line2: rgb(255 244 232 / 0.2);
+  --accent: #ff8a2b;
+  --accent-soft: rgb(255 138 43 / 0.15);
+  --accent-text: #1f0f03;
+  --ok: #5bd9a0;
+  --warn: #f5c451;
+  --bad: #ff6b7a;
+  --info: #6cc4f5;
+  --ok-soft: rgb(91 217 160 / 0.13);
+  --warn-soft: rgb(245 196 81 / 0.13);
+  --bad-soft: rgb(255 107 122 / 0.13);
+  --info-soft: rgb(108 196 245 / 0.13);
+  --syn-comment: #6f685f;
+  --syn-string: #5bd9a0;
+  --syn-keyword: #ff8a2b;
+  --syn-heading: #6cc4f5;
   --syn-variable: #e58ad2;
-  --syn-label: #f0a070;
+  --syn-label: #f5c451;
   --syn-type: #c3a2f0;
-  --bg: #1a1713;
-  --surface: #24201b;
-  --surface-2: #2e2923;
-  --text: #efe9dd;
-  --muted: #a39a8a;
-  --border: #38322a;
-  --accent: #8f8aff;
-  --accent-text: #14122b;
-  --ok: #4cc26d;
-  --warn: #e0a63b;
-  --bad: #f26b5e;
-  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
   color-scheme: dark;
+}
+
+/* the page says "line2" and "faint" in its own rules: alias the old names to the new ones */
+:root {
+  --line: var(--border);
 }
 
 *,
@@ -87,25 +141,56 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font: 15px/1.5 var(--sans);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--display);
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
-  padding: 0.35rem 0.8rem;
-  border: 1px solid var(--border);
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--line2);
   border-radius: var(--radius);
+  background: transparent;
+}
+
+input,
+select,
+textarea {
   background: var(--surface);
 }
 
 button {
   cursor: pointer;
+  font-weight: 500;
 }
 
 button:hover {
   border-color: var(--accent);
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+button:disabled:hover {
+  border-color: var(--line2);
+}
+
+a {
+  color: var(--text);
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
 }
 
 :focus-visible {

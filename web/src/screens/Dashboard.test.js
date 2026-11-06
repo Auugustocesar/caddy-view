@@ -1,45 +1,58 @@
-import { render, screen, within } from '@testing-library/svelte'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen, within } from '@testing-library/svelte'
+import { describe, expect, it, vi } from 'vitest'
 import Dashboard from './Dashboard.svelte'
 
 const reachable = { caddy: { reachable: true, endpoint: 'http://localhost:2019' } }
 const down = { caddy: { reachable: false, endpoint: 'http://localhost:2019', error: 'connection refused' } }
 
+const up = (address, state = 'answering', extra = {}) => ({ address, numRequests: 0, fails: 0, state, ...extra })
+
 const sites = {
   upstreamsAvailable: true,
+  upstreamCheck: true,
+  healthChecks: { proxies: 3, withChecks: 0 },
   sites: [
-    { server: 'srv1', host: 'app.example.com', upstreams: [{ address: '10.0.0.5:8080', numRequests: 3, fails: 0 }] },
-    {
-      server: 'srv1',
-      host: 'api.example.com',
-      upstreams: [
-        { address: '10.0.0.6:9000', numRequests: 0, fails: 2 },
-        { address: '10.0.0.7:9000', numRequests: 1, fails: 0 },
-      ],
-    },
-    { server: 'srv0', host: 'static.example.com', upstreams: [] },
+    { server: 'srv0', host: 'app.example.com', upstreams: [up('10.0.0.5:8080', 'answering', { latencyMs: 12.4, httpStatus: 200 })] },
+    { server: 'srv0', host: 'admin.example.com', upstreams: [up('10.0.0.9:3000', 'down')] },
+    { server: 'srv0', host: 'docs.example.com', upstreams: [up('10.0.0.4:4000', 'answering', { latencyMs: 3, httpStatus: 404 })] },
+    { server: 'srv0', host: 'files.example.com', upstreams: [] },
   ],
 }
 
-describe('Dashboard status', () => {
-  it('says Caddy is reachable and shows the Admin API address', () => {
+const summary = {
+  window: '24h',
+  requests: 6811,
+  errors5xx: 41,
+  errorRate: 0.006,
+  avgMs: 42.3,
+  p95Ms: 310,
+  bytes: 30828134,
+  status: { '2xx': 6000 },
+  inFlight: 3,
+  upstreams: { healthy: 4, total: 5 },
+  previous: { requests: 6425, errors5xx: 12, errorRate: 0.0019, avgMs: 40, p95Ms: 300 },
+}
+
+const hour = (h, requests) => ({ start: new Date(2026, 9, 28, h).toISOString(), requests, bytes: 0, status: {} })
+const traffic = { resolution: 'hour', bucketSeconds: 3600, buckets: [hour(8, 100), hour(9, 400)] }
+
+const figure = (name) => screen.getByRole('group', { name })
+
+describe('Dashboard state', () => {
+  it('says Caddy is reachable, with the Admin API address', () => {
     render(Dashboard, { status: reachable, sites })
-    const banner = screen.getByRole('status')
-    expect(banner.textContent).toContain('Caddy is reachable')
-    expect(banner.textContent).toContain('http://localhost:2019')
+    const chip = screen.getByRole('status')
+    expect(chip.textContent).toContain('Caddy is reachable')
+    expect(chip.dataset.state).toBe('up')
+    expect(screen.getByText(/http:\/\/localhost:2019/)).toBeTruthy()
   })
 
   it('says Caddy is not reachable and why', () => {
     render(Dashboard, { status: down, sites: null })
-    const banner = screen.getByRole('status')
-    expect(banner.textContent).toContain('Caddy is not reachable')
-    expect(banner.textContent).toContain('connection refused')
-    expect(banner.dataset.state).toBe('down')
-  })
-
-  it('marks a reachable Caddy so it can be styled differently', () => {
-    render(Dashboard, { status: reachable, sites })
-    expect(screen.getByRole('status').dataset.state).toBe('up')
+    const chip = screen.getByRole('status')
+    expect(chip.textContent).toContain('Caddy is not reachable')
+    expect(chip.textContent).toContain('connection refused')
+    expect(chip.dataset.state).toBe('down')
   })
 
   it('shows a loading message before the first answer', () => {
@@ -51,192 +64,241 @@ describe('Dashboard status', () => {
     render(Dashboard, { status: null, sites: null, loadError: 'cannot reach caddy-view' })
     expect(screen.getByRole('alert').textContent).toContain('cannot reach caddy-view')
   })
+
+  it('has a title, and says what the figures are compared with', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, range: '24h' })
+    expect(screen.getByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy()
+    expect(screen.getByText(/compared with the previous 24 hours/i)).toBeTruthy()
+  })
 })
 
-describe('Dashboard sites', () => {
-  it('lists every site with its server and upstreams', () => {
-    render(Dashboard, { status: reachable, sites })
-    const rows = screen.getAllByRole('row').slice(1) // the first row is the header
-    expect(rows).toHaveLength(3)
-
-    const app = within(rows[0])
-    expect(app.getByText('app.example.com')).toBeTruthy()
-    expect(app.getByText('srv1')).toBeTruthy()
-    expect(app.getByText('10.0.0.5:8080')).toBeTruthy()
-    expect(rows[0].textContent).toContain('3 active')
-    expect(rows[0].textContent).toContain('0 failures')
+describe('Dashboard range', () => {
+  it('offers 1 hour, 24 hours and 7 days, with the current one chosen', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, range: '24h' })
+    const group = screen.getByRole('radiogroup', { name: 'Range' })
+    expect(within(group).getAllByRole('radio').map((r) => r.textContent)).toEqual(['1h', '24h', '7d'])
+    expect(within(group).getByRole('radio', { name: '24h' }).getAttribute('aria-checked')).toBe('true')
   })
 
-  it('flags an upstream that has failures', () => {
-    render(Dashboard, { status: reachable, sites })
-    const failing = screen.getByText('10.0.0.6:9000').closest('[data-health]')
-    const healthy = screen.getByText('10.0.0.7:9000').closest('[data-health]')
-    expect(failing.dataset.health).toBe('failing')
-    expect(healthy.dataset.health).toBe('ok')
-    expect(failing.textContent).toContain('2 failures')
+  it('tells the shell when another is chosen', async () => {
+    const onrange = vi.fn()
+    render(Dashboard, { status: reachable, sites, summary, traffic, range: '24h', onrange })
+    await fireEvent.click(screen.getByRole('radio', { name: '7d' }))
+    expect(onrange).toHaveBeenCalledWith('7d')
+  })
+})
+
+describe('Dashboard key figures', () => {
+  it('shows requests with how they moved against the previous period', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(within(figure('Requests')).getByText('6,811')).toBeTruthy()
+    expect(within(figure('Requests')).getByText('+6% on the previous period')).toBeTruthy()
   })
 
-  it('uses the singular for one failure', () => {
-    const one = { upstreamsAvailable: true, sites: [{ server: 's', host: 'h', upstreams: [{ address: 'a:1', numRequests: 0, fails: 1 }] }] }
-    render(Dashboard, { status: reachable, sites: one })
-    expect(screen.getByText('a:1').closest('[data-health]').textContent).toContain('1 failure')
-    expect(screen.getByText('a:1').closest('[data-health]').textContent).not.toContain('1 failures')
+  it('shows the 5xx rate in times, and marks it when it doubled', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    const f = figure('5xx rate')
+    expect(within(f).getByText('0.6 %')).toBeTruthy()
+    expect(within(f).getByText(/41 of 6,811 requests/)).toBeTruthy()
+    expect(within(f).getByText('3.2x the previous period')).toBeTruthy()
+    expect(f.dataset.tone).toBe('bad')
   })
 
-  it('shows a site without upstreams as such', () => {
-    render(Dashboard, { status: reachable, sites })
-    const row = screen.getByText('static.example.com').closest('tr')
-    expect(row.textContent).toContain('No upstream')
+  it('shows the p95 latency with the average', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(within(figure('p95 latency')).getByText('310 ms')).toBeTruthy()
+    expect(within(figure('p95 latency')).getByText('average 42 ms')).toBeTruthy()
   })
 
-  it('says so when Caddy has no sites', () => {
-    render(Dashboard, { status: reachable, sites: { sites: [], upstreamsAvailable: true } })
-    expect(screen.getByText('No sites found')).toBeTruthy()
-    expect(screen.queryByRole('table')).toBeNull()
+  it('says nothing about the previous period when there is none', () => {
+    const none = { requests: 0, errors5xx: 0, errorRate: null, avgMs: null, p95Ms: null }
+    render(Dashboard, { status: reachable, sites, summary: { ...summary, previous: none }, traffic })
+    expect(within(figure('Requests')).queryByText(/on the previous period/)).toBeNull()
   })
 
-  it('warns that upstream health is unknown instead of showing zeros', () => {
-    render(Dashboard, { status: reachable, sites: { ...sites, upstreamsAvailable: false } })
-    expect(screen.getByText(/upstream health is unavailable/i)).toBeTruthy()
-    expect(screen.queryByText(/active/)).toBeNull()
-    expect(screen.queryByText(/failure/)).toBeNull()
-    expect(screen.getByText('10.0.0.5:8080')).toBeTruthy()
+  it('shows an en dash for what does not exist yet', () => {
+    const empty = { ...summary, requests: 0, errors5xx: 0, errorRate: null, avgMs: null, p95Ms: null, bytes: 0 }
+    render(Dashboard, { status: reachable, sites, summary: empty, traffic: { ...traffic, buckets: [] } })
+    expect(within(figure('5xx rate')).getByText('–')).toBeTruthy()
+    expect(within(figure('p95 latency')).getByText('–')).toBeTruthy()
+  })
+
+  it('counts the upstreams that answer, with a strip of one segment each, failing first', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    const f = figure('Upstreams')
+    expect(within(f).getByText('2 / 3')).toBeTruthy()
+    expect(within(f).getByText('1 down')).toBeTruthy()
+    const strip = within(f).getByRole('img')
+    expect(strip.getAttribute('aria-label')).toBe('2 answering, 1 down')
+    expect(Array.from(strip.children).map((s) => s.dataset.state)).toEqual(['down', 'answering', 'answering'])
+  })
+
+  it('says all answering when none is down', () => {
+    const fine = { ...sites, sites: [sites.sites[0]] }
+    render(Dashboard, { status: reachable, sites: fine, summary, traffic })
+    expect(within(figure('Upstreams')).getByText('all answering')).toBeTruthy()
+  })
+
+  it('counts unknown upstreams apart, never as down', () => {
+    const far = { ...sites, sites: [{ server: 's', host: 'far.example.com', upstreams: [up('172.16.0.1:80', 'unknown')] }] }
+    render(Dashboard, { status: reachable, sites: far, summary, traffic })
+    expect(within(figure('Upstreams')).getByText('1 unknown')).toBeTruthy()
+    expect(within(figure('Upstreams')).queryByText(/down/)).toBeNull()
+  })
+
+  it('falls back to what Caddy reports when the check is off', () => {
+    const off = { ...sites, upstreamCheck: false, sites: sites.sites.map((s) => ({ ...s, upstreams: s.upstreams.map((u) => ({ ...u, state: 'unknown' })) })) }
+    render(Dashboard, { status: reachable, sites: off, summary, traffic })
+    const f = figure('Upstreams')
+    expect(within(f).getByText('4 / 5')).toBeTruthy()
+    expect(within(f).getByText('healthy, as Caddy says')).toBeTruthy()
+  })
+
+  it('has no upstream figure without any information', () => {
+    render(Dashboard, { status: reachable, sites: { ...sites, sites: [], upstreamCheck: false }, summary: { ...summary, upstreams: null }, traffic })
+    expect(screen.queryByRole('group', { name: 'Upstreams' })).toBeNull()
+  })
+})
+
+describe('Dashboard history off', () => {
+  it('explains there are no totals or charts', () => {
+    render(Dashboard, { status: reachable, sites, historyOff: true })
+    expect(screen.getByText(/traffic history is off/i)).toBeTruthy()
+    expect(screen.queryByRole('group', { name: 'Requests' })).toBeNull()
+  })
+})
+
+describe('Dashboard chart', () => {
+  it('draws the requests over time', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(screen.getByRole('img', { name: /requests per hour/i })).toBeTruthy()
+  })
+
+  it('names the minute when it is by the minute', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic: { ...traffic, resolution: 'minute' }, range: '1h' })
+    expect(screen.getByRole('img', { name: /requests per minute/i })).toBeTruthy()
+  })
+})
+
+describe('Dashboard needs attention', () => {
+  const items = [
+    { kind: 'upstream_down', severity: 'bad', host: 'admin.example.com', down: ['10.0.9.9:3000'], total: 1 },
+    { kind: 'no_health_checks', severity: 'info' },
+  ]
+
+  it('lists the items with what is wrong', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, attention: items })
+    const section = screen.getByRole('region', { name: 'Needs attention' })
+    expect(within(section).getByText('admin.example.com is down')).toBeTruthy()
+    expect(within(section).getByText(/Its only upstream, 10.0.9.9:3000, does not answer/)).toBeTruthy()
+    expect(within(section).getByText('Caddy has no health checks')).toBeTruthy()
+  })
+
+  it('marks each item with its severity', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, attention: items })
+    const section = screen.getByRole('region', { name: 'Needs attention' })
+    expect(Array.from(section.querySelectorAll('[data-severity]')).map((e) => e.dataset.severity)).toEqual(['bad', 'info'])
+  })
+
+  it('says nothing needs attention when it does not', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, attention: [] })
+    expect(within(screen.getByRole('region', { name: 'Needs attention' })).getByText(/nothing needs attention/i)).toBeTruthy()
+  })
+
+  it('explains how it decides, once, in a tooltip on the title', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, attention: [] })
+    const section = screen.getByRole('region', { name: 'Needs attention' })
+    const help = within(section).getByRole('button', { name: /how this is decided/i })
+    expect(help.querySelector('[role="tooltip"]').textContent).toMatch(/median/i)
+  })
+
+  it('tells what a native health check of Caddy would need, from the statuses seen', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, attention: items })
+    const section = screen.getByRole('region', { name: 'Needs attention' })
+    // docs.example.com answers 404 on /, and a default check of Caddy counts only 2xx
+    expect(within(section).getByText(/1 of your 3 upstreams does not answer 2xx on \//)).toBeTruthy()
+  })
+
+  it('has no section without attention data', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull()
+  })
+})
+
+describe('Dashboard sites and upstreams', () => {
+  const list = () => within(screen.getByRole('region', { name: 'Sites and upstreams' }))
+
+  it('lists the upstreams failing first, each with its host and address', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    const rows = list().getAllByRole('listitem')
+    expect(rows.map((r) => r.dataset.state)).toEqual(['down', 'answering', 'answering'])
+    expect(within(rows[0]).getByText('admin.example.com')).toBeTruthy()
+    expect(within(rows[0]).getByText('10.0.0.9:3000')).toBeTruthy()
+    expect(rows[0].textContent).toContain('down')
+  })
+
+  it('shows the latency of an answering upstream', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    const row = screen.getByText('app.example.com').closest('li')
+    expect(row.textContent).toContain('answering')
+    expect(row.textContent).toContain('12 ms')
+  })
+
+  it('says what a non-2xx answer was', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(screen.getByText('docs.example.com').closest('li').textContent).toContain('answers 404')
+  })
+
+  it('shows unknown as unknown, not as a problem', () => {
+    const far = { ...sites, sites: [{ server: 's', host: 'far.example.com', upstreams: [up('172.16.0.1:80', 'unknown')] }] }
+    render(Dashboard, { status: reachable, sites: far, summary, traffic })
+    const row = screen.getByText('far.example.com').closest('li')
+    expect(row.dataset.state).toBe('unknown')
+    expect(row.textContent).toContain('unknown')
+  })
+
+  it('names a catch-all site', () => {
+    const any = { ...sites, sites: [{ server: 's', host: '', upstreams: [up('a:1')] }] }
+    render(Dashboard, { status: reachable, sites: any, summary, traffic })
+    expect(screen.getByText('(any host)')).toBeTruthy()
+  })
+
+  it('renders hostile names as text', () => {
+    const hostile = { ...sites, sites: [{ server: 's', host: '<img src=x onerror=alert(1)>', upstreams: [up('a:1')] }] }
+    const { container } = render(Dashboard, { status: reachable, sites: hostile, summary, traffic })
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy()
+  })
+
+  it('says so when Caddy has no upstreams', () => {
+    render(Dashboard, { status: reachable, sites: { ...sites, sites: [sites.sites[3]] }, summary, traffic })
+    expect(screen.getByText(/no upstreams/i)).toBeTruthy()
   })
 
   it('does not show sites while Caddy is down', () => {
     render(Dashboard, { status: down, sites: null })
-    expect(screen.queryByRole('table')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Sites and upstreams' })).toBeNull()
   })
 
-  it('renders hostile names as text', () => {
-    const hostile = {
-      upstreamsAvailable: true,
-      sites: [{ server: 's', host: '<img src=x onerror=alert(1)>', upstreams: [] }],
+  describe('with many upstreams', () => {
+    const many = {
+      ...sites,
+      sites: Array.from({ length: 20 }, (_, i) => ({ server: 's', host: `h${i}.example.com`, upstreams: [up(`10.0.0.${i}:80`, i === 7 ? 'down' : 'answering')] })),
     }
-    const { container } = render(Dashboard, { status: reachable, sites: hostile })
-    expect(container.querySelector('img')).toBeNull()
-    expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy()
-  })
-})
 
-describe('Dashboard sites without a host', () => {
-  it('shows a catch-all site as "any host" instead of an empty cell', () => {
-    const catchAll = { upstreamsAvailable: true, sites: [{ server: 'srv0', host: '', upstreams: [] }] }
-    render(Dashboard, { status: reachable, sites: catchAll })
-    expect(screen.getByText('(any host)')).toBeTruthy()
-  })
-})
+    it('shows the down one and a few more, behind a link for the rest', () => {
+      render(Dashboard, { status: reachable, sites: many, summary, traffic })
+      expect(list().getAllByRole('listitem')).toHaveLength(5)
+      expect(list().getAllByRole('listitem')[0].dataset.state).toBe('down')
+      expect(list().getByRole('button', { name: 'Show 15 more' })).toBeTruthy()
+    })
 
-const summary = {
-  window: '24h',
-  requests: 6811,
-  requestsPerSecond: 0.08,
-  errors5xx: 41,
-  errorRate: 0.006,
-  avgMs: 42.3,
-  p95Ms: 310,
-  bytes: 30828134,
-  status: { '2xx': 6000, '3xx': 400, '4xx': 370, '5xx': 41, '1xx': 0, other: 0 },
-  inFlight: 3,
-  upstreams: { healthy: 4, total: 5 },
-}
-
-const hour = (h, requests) => ({ start: new Date(2026, 9, 28, h).toISOString(), requests, bytes: 0, status: {} })
-const traffic = { resolution: 'hour', bucketSeconds: 3600, buckets: [hour(8, 100), hour(9, 400)] }
-
-const tile = (name) => screen.getByRole('group', { name })
-
-describe('Dashboard header', () => {
-  it('has a page title and a one-line subtitle', () => {
-    render(Dashboard, { status: reachable, sites })
-    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeTruthy()
-    expect(screen.getByText(/the last 24 hours and your sites at a glance/i)).toBeTruthy()
-  })
-})
-
-describe('Dashboard tiles', () => {
-  it('shows the totals of the last 24 hours', () => {
-    render(Dashboard, { status: reachable, sites, summary, traffic })
-    expect(screen.getByRole('heading', { name: 'Last 24 hours' })).toBeTruthy()
-    expect(within(tile('Requests')).getByText('6,811')).toBeTruthy()
-    expect(within(tile('Requests')).getByText('3 in flight')).toBeTruthy()
-    expect(within(tile('Traffic')).getByText('29.4 MB')).toBeTruthy()
-    expect(within(tile('Server errors')).getByText('0.6 %')).toBeTruthy()
-    expect(within(tile('Server errors')).getByText('41 requests')).toBeTruthy()
-    expect(within(tile('Avg. response time')).getByText('42 ms')).toBeTruthy()
-    expect(within(tile('Avg. response time')).getByText('p95 310 ms')).toBeTruthy()
-  })
-
-  it('says how many upstreams are healthy when Caddy reports them', () => {
-    render(Dashboard, { status: reachable, sites, summary, traffic })
-    expect(tile('Upstreams').textContent).toBe('Upstreams4 of 5healthy')
-  })
-
-  it('marks the upstreams tile when one is down', () => {
-    render(Dashboard, { status: reachable, sites, summary, traffic })
-    expect(tile('Upstreams').dataset.tone).toBe('warn')
-  })
-
-  it('leaves out what it does not know instead of showing zeros', () => {
-    const quiet = { ...summary, inFlight: null, upstreams: null }
-    render(Dashboard, { status: reachable, sites, summary: quiet, traffic })
-    expect(screen.queryByRole('group', { name: 'Upstreams' })).toBeNull()
-    expect(screen.queryByText(/in flight/)).toBeNull()
-  })
-
-  it('shows an en dash for averages that do not exist yet', () => {
-    const empty = { ...summary, requests: 0, errors5xx: 0, errorRate: null, avgMs: null, p95Ms: null, bytes: 0 }
-    render(Dashboard, { status: reachable, sites, summary: empty, traffic: { ...traffic, buckets: [] } })
-    expect(within(tile('Server errors')).getByText('–')).toBeTruthy()
-    expect(within(tile('Avg. response time')).getByText('–')).toBeTruthy()
-    expect(within(tile('Requests')).getByText('0')).toBeTruthy()
-  })
-
-  it('uses the singular for one failing request', () => {
-    render(Dashboard, { status: reachable, sites, summary: { ...summary, errors5xx: 1 }, traffic })
-    expect(within(tile('Server errors')).getByText('1 request')).toBeTruthy()
-  })
-
-  it('marks a tile with server errors so it can be coloured', () => {
-    render(Dashboard, { status: reachable, sites, summary, traffic })
-    expect(tile('Server errors').dataset.tone).toBe('bad')
-    expect(tile('Requests').hasAttribute('data-tone')).toBe(false)
-  })
-
-  it('does not colour the errors tile when there are none', () => {
-    render(Dashboard, { status: reachable, sites, summary: { ...summary, errors5xx: 0, errorRate: 0 }, traffic })
-    expect(tile('Server errors').hasAttribute('data-tone')).toBe(false)
-  })
-})
-
-describe('Dashboard traffic chart', () => {
-  it('draws requests per hour', () => {
-    const { container } = render(Dashboard, { status: reachable, sites, summary, traffic })
-    expect(screen.getByRole('img').getAttribute('aria-label')).toContain('Requests per hour')
-    expect(container.querySelectorAll('rect[data-bar]')).toHaveLength(2)
-  })
-
-  it('has no chart before the traffic has been read', () => {
-    render(Dashboard, { status: reachable, sites, summary, traffic: null })
-    expect(screen.queryByRole('img')).toBeNull()
-  })
-})
-
-describe('Dashboard without history', () => {
-  it('says the traffic history is off instead of showing tiles and a chart', () => {
-    render(Dashboard, { status: reachable, sites, historyOff: true })
-    expect(screen.getByText(/traffic history is off/i)).toBeTruthy()
-    expect(screen.queryByRole('group')).toBeNull()
-    expect(screen.queryByRole('img')).toBeNull()
-  })
-
-  it('still shows the sites', () => {
-    render(Dashboard, { status: reachable, sites, historyOff: true })
-    expect(screen.getByText('app.example.com')).toBeTruthy()
-  })
-
-  it('says nothing about history by default', () => {
-    render(Dashboard, { status: reachable, sites })
-    expect(screen.queryByText(/traffic history is off/i)).toBeNull()
+    it('opens the rest in place, and goes back with Show less', async () => {
+      render(Dashboard, { status: reachable, sites: many, summary, traffic })
+      await fireEvent.click(list().getByRole('button', { name: 'Show 15 more' }))
+      expect(list().getAllByRole('listitem')).toHaveLength(20)
+      await fireEvent.click(list().getByRole('button', { name: 'Show less' }))
+      expect(list().getAllByRole('listitem')).toHaveLength(5)
+    })
   })
 })

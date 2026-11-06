@@ -1,5 +1,5 @@
 <script>
-  import { ApiError, getConfig, getSites, getStatus, getSummary, getTraffic, reportUnauthorized } from './lib/api.js'
+  import { ApiError, getAttention, getConfig, getSites, getStatus, getSummary, getTraffic, reportUnauthorized } from './lib/api.js'
   import { LogStream } from './lib/logstream.js'
   import { startPolling } from './lib/poller.js'
   import { TABS, tabFromPath } from './lib/router.js'
@@ -69,23 +69,38 @@
   let sites = $state(null)
   let summary = $state(null)
   let traffic = $state(null)
+  let attention = $state(null)
   let historyOff = $state(false)
   let dashboardError = $state('')
+  let range = $state('24h')
+
+  // The traffic of a range: by the minute for an hour, by the hour for a day, and for a week by the hour from seven days ago.
+  function trafficFor(window) {
+    if (window === '1h') return getTraffic('minute')
+    if (window === '7d') return getTraffic('hour', { from: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString() })
+    return getTraffic('hour')
+  }
 
   $effect(() => {
     if (tab !== 'dashboard') return
+    const window = range
     return startPolling(async () => {
       try {
         status = await getStatus()
         // The sites need a reachable Caddy, and /api/sites answers 502 when it is not.
         sites = status.caddy.reachable ? await getSites() : null
         try {
-          ;[summary, traffic] = await Promise.all([getSummary('24h'), getTraffic('hour')])
+          ;[summary, traffic] = await Promise.all([getSummary(window), trafficFor(window)])
           historyOff = false
+          // What needs attention is a help, not the page: when it cannot be read the figures still show.
+          attention = await getAttention(window).then(
+            (body) => body.items,
+            () => null,
+          )
         } catch (err) {
           // Without a history the routes are not there at all: that is a setting, not a failure.
           if (!(err instanceof ApiError && err.status === 404)) throw err
-          summary = traffic = null
+          summary = traffic = attention = null
           historyOff = true
         }
         dashboardError = ''
@@ -178,7 +193,7 @@
 
 <main>
   {#if tab === 'dashboard'}
-    <Dashboard {status} {sites} {summary} {traffic} {historyOff} loadError={dashboardError} />
+    <Dashboard {status} {sites} {summary} {traffic} {attention} {range} onrange={(value) => (range = value)} {historyOff} loadError={dashboardError} />
   {:else if tab === 'sites'}
     <SitesView />
   {:else if tab === 'caddyfile'}
@@ -209,49 +224,48 @@
 <style>
   header {
     position: sticky;
-    top: 0.75rem;
-    z-index: 1;
-    padding: 0 1rem;
+    top: 0;
+    z-index: 3;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
   }
   .bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.5rem;
-    max-width: 72rem;
+    gap: 0.5rem 2rem;
+    max-width: 80rem;
     margin: 0 auto;
-    padding: 0.4rem 0.5rem 0.4rem 1rem;
-    border-radius: 999px;
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    padding: 1.1rem 2rem;
   }
   .brand {
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font: 700 1.3rem / 1 var(--display);
+    letter-spacing: -0.025em;
   }
   nav {
     display: flex;
     flex: 1;
+    flex-wrap: wrap;
     justify-content: center;
-    gap: 0.15rem;
+    gap: 0.25rem 1.75rem;
     min-width: 0;
   }
   a {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
-    padding: 0.4rem 0.9rem;
-    border-radius: 999px;
+    padding: 0.35rem 0;
+    border-bottom: 2px solid transparent;
     color: var(--muted);
-    font-size: 0.9rem;
+    font-weight: 500;
     text-decoration: none;
   }
   a:hover {
     color: var(--text);
   }
   a[aria-current='page'] {
-    background: var(--surface-2);
+    border-bottom-color: var(--accent);
     color: var(--text);
-    font-weight: 600;
   }
   .icon {
     flex: none;
@@ -263,15 +277,17 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
+  /* the tabs are words on a wide screen; the icons are for a narrow one */
+  nav .icon {
+    display: none;
+  }
   .theme {
     display: grid;
     place-items: center;
-    width: 2.2rem;
-    height: 2.2rem;
+    width: 2.1rem;
+    height: 2.1rem;
     padding: 0;
-    border: 0;
     border-radius: 50%;
-    background: var(--surface-2);
     color: var(--muted);
   }
   .theme:hover {
@@ -279,52 +295,53 @@
   }
   .user {
     color: var(--muted);
-    font-size: 0.85rem;
+    font-size: 0.9rem;
   }
   .signout {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.4rem 0.8rem;
+    padding: 0.2rem 0;
     border: 0;
-    border-radius: 999px;
-    background: var(--surface-2);
-    color: var(--muted);
-    font: inherit;
-    font-size: 0.85rem;
-    cursor: pointer;
-  }
-  .signout:hover {
+    border-bottom: 2px solid var(--accent);
+    border-radius: 0;
     color: var(--text);
+    font-size: 0.9rem;
+  }
+  .signout .icon {
+    display: none;
   }
   .view-switch {
-    margin-bottom: 1rem;
+    margin-bottom: 1.25rem;
   }
   main {
-    max-width: 72rem;
-    margin: 2rem auto;
-    padding: 0 1rem;
+    max-width: 80rem;
+    margin: 2.5rem auto 4rem;
+    padding: 0 2rem;
   }
 
-  @media (max-width: 40rem) {
-    .brand,
-    .user {
-      display: none;
-    }
-    /* Only the icon shows, but the tab keeps its name for screen readers. */
-    a span,
-    .signout span {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip-path: inset(50%);
-    }
+  @media (max-width: 48rem) {
     .bar {
-      padding-left: 0.5rem;
+      padding: 0.8rem 1rem;
+      gap: 0.5rem 1rem;
     }
-    a {
-      padding: 0.55rem 0.8rem;
+    main {
+      margin-top: 1.5rem;
+      padding: 0 1rem;
+    }
+    nav {
+      order: 3;
+      flex-basis: 100%;
+      justify-content: flex-start;
+      overflow-x: auto;
+      flex-wrap: nowrap;
+      gap: 1.25rem;
+    }
+    nav a {
+      flex: none;
+    }
+    .brand {
+      flex: 1;
     }
   }
 </style>

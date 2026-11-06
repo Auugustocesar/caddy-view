@@ -13,35 +13,29 @@
   .tile {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
-    padding: 1rem 1.15rem;
-    border-radius: var(--radius-lg);
-    background: var(--surface-2);
+    gap: 0.3rem;
+    min-width: 0;
+    padding: 1.1rem 0 0.2rem;
+    border-top: 1px solid var(--line2);
   }
   .label {
     color: var(--muted);
-    font-size: 0.7rem;
-    font-weight: 600;
+    font: 500 0.72rem / 1.2 var(--mono);
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .value {
-    font-size: 2rem;
-    font-weight: 300;
-    line-height: 1.15;
-    letter-spacing: -0.01em;
+    font: 600 2.4rem / 1.05 var(--display);
+    letter-spacing: -0.03em;
     font-variant-numeric: tabular-nums;
   }
   .detail {
     color: var(--muted);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
   }
   @media (max-width: 40rem) {
-    .tile {
-      padding: 0.85rem 0.95rem;
-    }
     .value {
-      font-size: 1.65rem;
+      font-size: 1.9rem;
     }
   }
   .tile[data-tone='bad'] .value {
