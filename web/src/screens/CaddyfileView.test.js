@@ -439,3 +439,16 @@ describe('CaddyfileView with what Caddy really says', () => {
     expect((await screen.findByRole('alert')).textContent.trim()).toBe("syntax error: unexpected token 'x', expecting '}'")
   })
 })
+
+describe('CaddyfileView changes in the margin', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('marks the lines that differ from the file on disk, and none once they are the file again', async () => {
+    const { container } = await open()
+    expect(container.querySelectorAll('.cm-change-marker')).toHaveLength(0)
+    type(container, 'example.com {\n\trespond "bye"\n}\n')
+    expect(container.querySelectorAll('.cm-change-marker[data-kind="added"]')).toHaveLength(1)
+    type(container, FILE)
+    expect(container.querySelectorAll('.cm-change-marker')).toHaveLength(0)
+  })
+})

@@ -259,7 +259,7 @@
   {/if}
 
   <div class="card editor">
-    <CodeEditor value={draft} label="Caddyfile editor" errorLine={markedLine} readonly={sitesOnly} onchange={edit} />
+    <CodeEditor value={draft} label="Caddyfile editor" errorLine={markedLine} baseline={saved.content} readonly={sitesOnly} onchange={edit} />
   </div>
 
   {#if dirty && check.warnings.length > 0}
