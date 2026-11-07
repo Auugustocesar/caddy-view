@@ -1,5 +1,6 @@
 <script>
-  import { formatBytes, formatCount, formatMs } from '../lib/format.js'
+  import { formatBytes, formatCount, formatMs, formatPercent } from '../lib/format.js'
+  import { statusShares } from '../lib/metrics.js'
 
   /**
    * `flags` marks hosts that need attention: 'errors' for more 5xx than before, 'slow' for a p95 far above the others.
@@ -15,7 +16,7 @@
     <table aria-label="Hosts">
       <thead>
         <tr>
-          <th>Host</th><th class="num">Requests</th><th class="num">Traffic</th><th class="num">Server errors</th><th class="num">Avg. time</th><th class="num">p95</th>
+          <th>Host</th><th class="num">Requests</th><th class="num">p95</th><th class="num">5xx</th><th class="num">Sent</th><th>Status codes</th>
         </tr>
       </thead>
       <tbody>
@@ -29,10 +30,17 @@
               {/if}
             </td>
             <td class="num">{formatCount(h.requests)}</td>
-            <td class="num">{formatBytes(h.bytes)}</td>
-            <td class="num errors">{formatCount(h.errors5xx)}</td>
-            <td class="num">{formatMs(h.avgMs)}</td>
             <td class="num p95">{formatMs(h.p95Ms)}</td>
+            <td class="num errors">{formatCount(h.errors5xx)}</td>
+            <td class="num">{formatBytes(h.bytes)}</td>
+            <td class="codes">
+              {#if statusShares(h.status).length > 0}
+                {@const shares = statusShares(h.status)}
+                <div class="bar" role="img" aria-label={shares.map((x) => `${formatPercent(x.share)} ${x.key}`).join(', ')}>
+                  {#each shares as x (x.key)}<span data-class={x.key} style:width="{(x.share * 100).toFixed(2)}%"></span>{/each}
+                </div>
+              {/if}
+            </td>
           </tr>
         {/each}
       </tbody>
@@ -89,6 +97,34 @@
   .host button[aria-pressed='true'] {
     color: var(--accent);
     text-decoration-color: var(--accent);
+  }
+  .codes {
+    width: 9rem;
+  }
+  .bar {
+    display: flex;
+    height: 0.5rem;
+    gap: 1px;
+    overflow: hidden;
+    border-radius: 0.25rem;
+  }
+  .bar span {
+    display: block;
+    min-width: 2px;
+    background: var(--ok);
+  }
+  .bar span[data-class='3xx'] {
+    background: var(--info);
+  }
+  .bar span[data-class='4xx'] {
+    background: var(--warn);
+  }
+  .bar span[data-class='5xx'] {
+    background: var(--bad);
+  }
+  .bar span[data-class='1xx'],
+  .bar span[data-class='other'] {
+    background: var(--faint);
   }
   tr[data-errors='true'] .errors {
     color: var(--bad);

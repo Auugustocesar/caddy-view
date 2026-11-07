@@ -88,10 +88,18 @@ export function errorsByField(errors) {
   return out
 }
 
-/** What a site does, in a few words, for a table. @param {Site} site @returns {string} */
-export function describeSite(site) {
-  if (site.kind === 'redirect') return `Redirect to ${site.redirectTarget} (${site.redirectCode})`
-  return site.upstreams?.length ? `Proxy to ${site.upstreams.join(', ')}` : 'Proxy'
+/** The line under a site's name: where a proxy sends visitors, or where a redirect goes. @param {{kind: string, upstreams?: string[], skipTlsVerify?: boolean, redirectTarget?: string, redirectCode?: number}} site @returns {string} */
+export function siteSub(site) {
+  if (site.kind === 'redirect') return `${site.redirectCode} to ${site.redirectTarget}`
+  const upstreams = (site.upstreams ?? []).join(', ')
+  return upstreams && site.skipTlsVerify ? `${upstreams}, TLS not verified` : upstreams
+}
+
+const TLS_LABELS = { automatic: 'Automatic TLS', internal: 'Internal CA', off: 'Plain HTTP' }
+
+/** How a site gets its certificate, in words. An unknown value is given back as it is. @param {string} tls @returns {string} */
+export function tlsLabel(tls) {
+  return TLS_LABELS[tls] ?? tls
 }
 
 /** Whether a site asks for a password. The API says only that, never the hash. @param {{basicAuth?: {user: string} | null}} site @returns {boolean} */

@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 import HostsTable from './HostsTable.svelte'
 
 const hosts = [
-  { host: 'app.example.com', requests: 1547, bytes: 30828134, errors5xx: 0, status: {}, avgMs: 42.3, p95Ms: 100, maxMs: 800 },
-  { host: 'api.example.com', requests: 312, bytes: 2048, errors5xx: 18, status: {}, avgMs: 1500, p95Ms: 5000, maxMs: 9000 },
+  { host: 'app.example.com', requests: 1547, bytes: 30828134, errors5xx: 0, status: { '2xx': 1200, '3xx': 300, '4xx': 47, '5xx': 0 }, avgMs: 42.3, p95Ms: 100, maxMs: 800 },
+  { host: 'api.example.com', requests: 312, bytes: 2048, errors5xx: 18, status: { '2xx': 280, '5xx': 18, '4xx': 14 }, avgMs: 1500, p95Ms: 5000, maxMs: 9000 },
   { host: '', requests: 4, bytes: 0, errors5xx: 0, status: {}, avgMs: null, p95Ms: null, maxMs: null },
 ]
 
@@ -23,19 +23,19 @@ describe('HostsTable', () => {
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent.trim())).toEqual([
       'Host',
       'Requests',
-      'Traffic',
-      'Server errors',
-      'Avg. time',
       'p95',
+      '5xx',
+      'Sent',
+      'Status codes',
     ])
   })
 
   it('shows each host with its figures laid out for reading', () => {
     open()
     const cells = Array.from(rowOf('app.example.com').querySelectorAll('td')).map((c) => c.textContent.trim())
-    expect(cells).toEqual(['app.example.com', '1,547', '29.4 MB', '0', '42 ms', '100 ms'])
+    expect(cells).toEqual(['app.example.com', '1,547', '100 ms', '0', '29.4 MB', ''])
     const slow = Array.from(rowOf('api.example.com').querySelectorAll('td')).map((c) => c.textContent.trim())
-    expect(slow).toEqual(['api.example.com', '312', '2.0 KB', '18', '1.5 s', '5 s'])
+    expect(slow).toEqual(['api.example.com', '312', '5 s', '18', '2.0 KB', ''])
   })
 
   it('keeps the order it is given', () => {
@@ -44,16 +44,28 @@ describe('HostsTable', () => {
     expect(names).toEqual(['app.example.com', 'api.example.com', '(no host)'])
   })
 
-  it('shows a request without a host as such, and a missing average as a dash', () => {
+  it('shows a request without a host as such, and a missing latency as a dash', () => {
     open()
     const cells = Array.from(rowOf('(no host)').querySelectorAll('td')).map((c) => c.textContent.trim())
-    expect(cells).toEqual(['(no host)', '4', '0 B', '0', '–', '–'])
+    expect(cells).toEqual(['(no host)', '4', '–', '0', '0 B', ''])
   })
 
   it('marks the hosts that had server errors', () => {
     open()
     expect(rowOf('api.example.com').dataset.errors).toBe('true')
     expect(rowOf('app.example.com').hasAttribute('data-errors')).toBe(false)
+  })
+
+  it('draws the status classes of a host as one bar, and says them for those who cannot see it', () => {
+    open()
+    const bar = within(rowOf('app.example.com')).getByRole('img')
+    expect(bar.getAttribute('aria-label')).toBe('77.6 % 2xx, 19.4 % 3xx, 3 % 4xx')
+    expect(Array.from(bar.children).map((c) => c.dataset.class)).toEqual(['2xx', '3xx', '4xx'])
+  })
+
+  it('draws no bar for a host without statuses', () => {
+    open()
+    expect(within(rowOf('(no host)')).queryByRole('img')).toBeNull()
   })
 
   it('asks to filter by a host when its name is clicked', async () => {

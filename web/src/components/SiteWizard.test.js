@@ -64,7 +64,7 @@ afterEach(() => vi.unstubAllGlobals())
 describe('SiteWizard for a new site', () => {
   it('opens with a reverse proxy, automatic TLS and nothing asked of the server yet', () => {
     const { server } = open()
-    expect(screen.getByRole('heading', { name: 'Add a site' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'New site' })).toBeTruthy()
     expect(screen.getByLabelText('Reverse proxy').checked).toBe(true)
     expect(screen.getByLabelText('Redirect').checked).toBe(false)
     expect(screen.getByLabelText('TLS').value).toBe('automatic')

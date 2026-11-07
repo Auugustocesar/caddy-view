@@ -1,12 +1,12 @@
 <script>
-  /** @type {{label: string, value: string, detail?: string, tone?: 'ok'|'warn'|'bad'}} */
-  let { label, value, detail = '', tone = undefined } = $props()
+  /** @type {{label: string, value: string, detail?: string, extra?: string, tone?: 'ok'|'warn'|'bad'}} */
+  let { label, value, detail = '', extra = '', tone = undefined } = $props()
 
   const labelId = $props.id()
 </script>
 
 <div class="tile" role="group" aria-labelledby={labelId} data-tone={tone}>
-  <span class="label" id={labelId}>{label}</span><strong class="value">{value}</strong>{#if detail}<span class="detail">{detail}</span>{/if}
+  <span class="label" id={labelId}>{label}</span><strong class="value">{value}</strong>{#if detail}<span class="detail">{detail}</span>{/if}{#if extra}<span class="detail">{extra}</span>{/if}
 </div>
 
 <style>

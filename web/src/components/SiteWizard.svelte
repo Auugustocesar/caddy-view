@@ -8,7 +8,7 @@
   let { site = null, accessLog = false, previewDelay = 400, onsaved = () => {}, oncancel = () => {} } = $props()
 
   const uid = $props.id()
-  const title = site ? `Edit ${site.hostname}` : 'Add a site'
+  const title = site ? `Edit ${site.hostname}` : 'New site'
 
   const CODE_NAMES = { 301: 'Moved Permanently', 302: 'Found', 307: 'Temporary Redirect', 308: 'Permanent Redirect' }
 
@@ -289,14 +289,91 @@
     letter-spacing: normal;
     text-transform: none;
   }
+  /* the kind of site: two pills, with the chosen one filled; the radios stay in the page for the keyboard and the readers */
   .kind {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.3rem 1.5rem;
+    align-items: center;
+    gap: 0;
   }
   .kind legend {
     width: 100%;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.4rem;
+  }
+  .kind .choice {
+    position: relative;
+    padding: 0.35rem 0.95rem;
+    border: 1px solid var(--line2);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .kind .choice:first-of-type {
+    border-radius: 999px 0 0 999px;
+  }
+  .kind .choice:last-of-type {
+    margin-left: -1px;
+    border-radius: 0 999px 999px 0;
+  }
+  .kind .choice input {
+    position: absolute;
+    opacity: 0;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    cursor: pointer;
+  }
+  .kind .choice:has(input:checked) {
+    border-color: var(--text);
+    background: var(--text);
+    color: var(--bg);
+  }
+  .kind .choice:has(input:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  /* an option: its name on the left and a switch on the right */
+  .choice:has(input[type='checkbox']) {
+    flex-direction: row-reverse;
+    justify-content: space-between;
+    padding: 0.35rem 0;
+    font-weight: 500;
+  }
+  input[type='checkbox'] {
+    appearance: none;
+    position: relative;
+    flex: none;
+    width: 2.6rem;
+    height: 1.5rem;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--line2);
+    border-radius: 999px;
+    background: var(--surface-2);
+    cursor: pointer;
+  }
+  input[type='checkbox']::after {
+    content: '';
+    position: absolute;
+    top: 0.18rem;
+    left: 0.2rem;
+    width: 1.1rem;
+    height: 1.1rem;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: transform 0.12s;
+  }
+  input[type='checkbox']:checked {
+    border-color: transparent;
+    background: var(--accent);
+  }
+  input[type='checkbox']:checked::after {
+    background: var(--accent-text);
+    transform: translateX(1.1rem);
+  }
+  input[type='checkbox']:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   input[type='text'],
   textarea,
@@ -342,12 +419,14 @@
   }
   .generated pre {
     margin: 0.3rem 0 0;
-    padding: 0.75rem 1rem;
+    padding: 0.9rem 1rem;
     overflow-x: auto;
+    border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--surface-2);
+    background: var(--bg);
     font-family: var(--mono);
     font-size: 0.82rem;
+    line-height: 1.6;
   }
   .generated[aria-busy='true'] pre {
     opacity: 0.55;

@@ -15,6 +15,17 @@ describe('Tile', () => {
     expect(screen.getByRole('group', { name: 'Traffic' }).textContent).toBe('Traffic29.4 MB')
   })
 
+  it('can carry a second line under the first', () => {
+    render(Tile, { label: '5xx rate', value: '1 %', detail: '4 of 400 requests', extra: '3x the previous period' })
+    const tile = screen.getByRole('group', { name: '5xx rate' })
+    expect(tile.textContent).toBe('5xx rate1 %4 of 400 requests3x the previous period')
+  })
+
+  it('has no second line by default', () => {
+    render(Tile, { label: 'Traffic', value: '1 B', detail: 'x' })
+    expect(screen.getByRole('group', { name: 'Traffic' }).querySelectorAll('.detail')).toHaveLength(1)
+  })
+
   it('carries its tone so it can be coloured', () => {
     render(Tile, { label: 'Server errors', value: '3 %', tone: 'bad' })
     expect(screen.getByRole('group', { name: 'Server errors' }).dataset.tone).toBe('bad')

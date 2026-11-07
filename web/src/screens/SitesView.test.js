@@ -101,8 +101,8 @@ const open = async (routes) => {
   return { ...view, server }
 }
 
-const managed = () => screen.getByRole('table', { name: 'Managed sites' })
-const rowOf = (host) => within(managed()).getByText(host).closest('tr')
+const managed = () => screen.getByRole('list', { name: 'Managed sites' })
+const rowOf = (host) => within(managed()).getByText(host).closest('li')
 const button = (name) => screen.getByRole('button', { name })
 const status = () => screen.getByRole('status').textContent
 
@@ -113,21 +113,23 @@ describe('SitesView listing', () => {
     await open()
     await within(managed()).findByText('a.example.com')
     const a = rowOf('a.example.com')
-    expect(a.textContent).toContain('Proxy to 10.0.0.5:8080')
-    expect(a.textContent).toContain('automatic')
-    expect(a.textContent).toMatch(/enabled/i)
+    expect(a.textContent).toContain('Proxy')
+    expect(a.textContent).toContain('10.0.0.5:8080')
+    expect(a.textContent).toContain('Automatic TLS')
+    expect(within(a).getByRole('button', { name: 'Disable a.example.com' }).getAttribute('aria-pressed')).toBe('true')
     const b = rowOf('b.example.com')
-    expect(b.textContent).toContain('Redirect to https://x.example.com{uri} (308)')
-    expect(b.textContent).toContain('off')
-    expect(b.textContent).toMatch(/disabled/i)
+    expect(b.textContent).toContain('Redirect')
+    expect(b.textContent).toContain('308 to https://x.example.com{uri}')
+    expect(b.textContent).toContain('Plain HTTP')
+    expect(within(b).getByRole('button', { name: 'Enable b.example.com' }).getAttribute('aria-pressed')).toBe('false')
   })
 
   it('marks the sites that ask for a password, and only those', async () => {
     const protectedSite = { ...siteA, basicAuth: { user: 'bob' } }
     await open({ 'GET /api/managed-sites': () => json(listing({ sites: [protectedSite, { ...siteB, basicAuth: null }] })) })
     await within(managed()).findByText('a.example.com')
-    expect(rowOf('a.example.com').textContent).toMatch(/password/i)
-    expect(rowOf('b.example.com').textContent).not.toMatch(/password/i)
+    expect(rowOf('a.example.com').textContent).toMatch(/basic auth/i)
+    expect(rowOf('b.example.com').textContent).not.toMatch(/basic auth/i)
   })
 
   it('names the user of a protected site, but never shows a password', async () => {
@@ -150,15 +152,15 @@ describe('SitesView listing', () => {
   it('says there are no managed sites yet', async () => {
     await open({ 'GET /api/managed-sites': () => json(listing({ sites: [] })) })
     expect(await screen.findByText(/no managed sites yet/i)).toBeTruthy()
-    expect(screen.queryByRole('table', { name: 'Managed sites' })).toBeNull()
-    expect(button('Add site').disabled).toBe(false)
+    expect(screen.queryByRole('list', { name: 'Managed sites' })).toBeNull()
+    expect(button('New site').disabled).toBe(false)
   })
 
   it('shows what Caddy is running, marking the sites caddy-view manages', async () => {
     await open()
     const section = await screen.findByRole('region', { name: 'Running in Caddy' })
-    const managedRow = within(section).getByText('a.example.com').closest('tr')
-    const handRow = within(section).getByText('hand.example.com').closest('tr')
+    const managedRow = within(section).getByText('a.example.com').closest('li')
+    const handRow = within(section).getByText('hand.example.com').closest('li')
     expect(managedRow.textContent).toMatch(/managed/i)
     expect(handRow.textContent).toMatch(/caddyfile/i)
   })
@@ -172,7 +174,7 @@ describe('SitesView listing', () => {
   it('does not call a disabled site managed-and-running', async () => {
     await open({ 'GET /api/sites': () => json({ ...running, sites: [{ server: 's', host: 'b.example.com', upstreams: [] }] }) })
     const section = await screen.findByRole('region', { name: 'Running in Caddy' })
-    expect(within(section).getByText('b.example.com').closest('tr').textContent).toMatch(/caddyfile/i)
+    expect(within(section).getByText('b.example.com').closest('li').textContent).toMatch(/caddyfile/i)
   })
 
   it('says so when it cannot read what Caddy runs, and still lists the managed sites', async () => {
@@ -199,7 +201,7 @@ describe('SitesView without editing', () => {
     api({ 'GET /api/managed-sites': () => json({ error: 'not found' }, 404) })
     render(SitesView, { previewDelay: 0 })
     expect(await screen.findByText(/--allow-edit/)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Add site' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'New site' })).toBeNull()
     expect(await screen.findByText('hand.example.com')).toBeTruthy()
   })
 
@@ -230,7 +232,7 @@ describe('SitesView when the Caddyfile does not import the managed file', () => 
   it('waits for the import before a site can be added', async () => {
     await open(notImported)
     await screen.findByRole('region', { name: 'Setup' })
-    expect(button('Add site').disabled).toBe(true)
+    expect(button('New site').disabled).toBe(true)
   })
 
   it('says nothing about it when the Caddyfile imports the file', async () => {
@@ -250,7 +252,7 @@ describe('SitesView when the Caddyfile does not import the managed file', () => 
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Setup' })).toBeNull())
     expect(status()).toMatch(/import/i)
     expect(status()).toContain('revision 10')
-    await waitFor(() => expect(button('Add site').disabled).toBe(false))
+    await waitFor(() => expect(button('New site').disabled).toBe(false))
   })
 
   it('says why the import could not be added, and keeps offering it', async () => {
@@ -276,41 +278,49 @@ describe('SitesView when the Caddyfile does not import the managed file', () => 
 })
 
 describe('SitesView adding and changing sites', () => {
-  it('opens the wizard for a new site, and closes it on cancel', async () => {
+  it('has the form of a new site beside the list from the start, and Cancel clears it', async () => {
     await open()
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add site' }))
-    expect(screen.getByRole('heading', { name: 'Add a site' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'New site' })).toBeTruthy()
+    await fireEvent.input(screen.getByLabelText('Hostname'), { target: { value: 'typed.example.com' } })
     await fireEvent.click(button('Cancel'))
-    expect(screen.queryByRole('heading', { name: 'Add a site' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'New site' })).toBeTruthy()
+    expect(screen.getByLabelText('Hostname').value).toBe('')
   })
 
-  it('tells the wizard whether an access log is known', async () => {
+  it('starts the form over when New site is pressed', async () => {
+    await open()
+    await within(managed()).findByText('a.example.com')
+    await fireEvent.click(button('Edit a.example.com'))
+    await fireEvent.click(button('New site'))
+    expect(screen.getByRole('heading', { name: 'New site' })).toBeTruthy()
+    expect(screen.getByLabelText('Hostname').value).toBe('')
+  })
+
+  it('tells the form whether an access log is known', async () => {
     await open({ 'GET /api/managed-sites': () => json(listing({ accessLog: false })) })
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add site' }))
     expect(screen.getByLabelText('Log requests').disabled).toBe(true)
   })
 
-  it('adds the site, closes the wizard, reads the list again and says what happened', async () => {
+  it('adds the site, clears the form, reads the list again and says what happened', async () => {
     let reads = 0
     const added = { ...siteA, id: 'c'.repeat(32), hostname: 'c.example.com' }
     await open({ 'GET /api/managed-sites': () => json(++reads === 1 ? listing() : listing({ sites: [siteA, siteB, added] })) })
-    await fireEvent.click(await screen.findByRole('button', { name: 'Add site' }))
     await fireEvent.input(screen.getByLabelText('Hostname'), { target: { value: 'c.example.com' } })
     await fireEvent.input(screen.getByLabelText('Upstreams'), { target: { value: '10.0.0.7:9000' } })
     const submit = await waitFor(() => {
-      const b = screen.getAllByRole('button', { name: 'Add site' }).find((el) => el.closest('form') && !el.disabled)
-      expect(b).toBeTruthy()
+      const b = screen.getByRole('button', { name: 'Add site' })
+      expect(b.disabled).toBe(false)
       return b
     })
     await fireEvent.click(submit)
 
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a site' })).toBeNull())
     expect(await within(managed()).findByText('c.example.com')).toBeTruthy()
+    await waitFor(() => expect(screen.getByLabelText('Hostname').value).toBe(''))
     expect(status()).toContain('c.example.com')
     expect(status()).toContain('revision 11')
   })
 
-  it('opens the wizard on a site to change it', async () => {
+  it('opens a site in the form to change it', async () => {
     await open()
     await within(managed()).findByText('a.example.com')
     await fireEvent.click(button('Edit a.example.com'))
@@ -318,7 +328,7 @@ describe('SitesView adding and changing sites', () => {
     expect(screen.getByLabelText('Upstreams').value).toBe('10.0.0.5:8080')
   })
 
-  it('saves a change, closes the wizard and says what happened', async () => {
+  it('saves a change, goes back to the form of a new site and says what happened', async () => {
     const { server } = await open()
     await within(managed()).findByText('a.example.com')
     await fireEvent.click(button('Edit a.example.com'))
@@ -328,17 +338,24 @@ describe('SitesView adding and changing sites', () => {
     await fireEvent.click(button('Save changes'))
 
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Edit a.example.com' })).toBeNull())
+    expect(screen.getByRole('heading', { name: 'New site' })).toBeTruthy()
     expect(server.to('PUT', `/api/managed-sites/${A}`)[0].body.upstreams).toEqual(['10.0.0.9:8080'])
     expect(status()).toContain('revision 12')
   })
 
-  it('shows one wizard at a time', async () => {
+  it('shows one form at a time', async () => {
     await open()
     await within(managed()).findByText('a.example.com')
-    await fireEvent.click(button('Add site'))
     await fireEvent.click(button('Edit b.example.com'))
     expect(screen.getAllByRole('form')).toHaveLength(1)
     expect(screen.getByRole('heading', { name: 'Edit b.example.com' })).toBeTruthy()
+  })
+
+  it('has no form when editing is off', async () => {
+    api({ 'GET /api/managed-sites': () => json({ error: 'not found' }, 404) })
+    render(SitesView, { previewDelay: 0 })
+    await screen.findByText(/--allow-edit/)
+    expect(screen.queryByRole('form')).toBeNull()
   })
 })
 
@@ -393,7 +410,7 @@ describe('SitesView enabling, disabling and deleting', () => {
     await within(managed()).findByText('a.example.com')
     await fireEvent.click(button('Disable a.example.com'))
     expect((await screen.findByRole('alert')).textContent).toContain('caddy refused the load')
-    expect(rowOf('a.example.com').textContent).toMatch(/enabled/i)
+    expect(within(rowOf('a.example.com')).getByRole('button', { name: 'Disable a.example.com' }).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('asks before it deletes, and does nothing if told not to', async () => {
@@ -403,7 +420,7 @@ describe('SitesView enabling, disabling and deleting', () => {
     expect(screen.getByText(/delete a\.example\.com\?/i)).toBeTruthy()
     expect(server.to('DELETE', `/api/managed-sites/${A}`)).toHaveLength(0)
 
-    await fireEvent.click(button('Cancel'))
+    await fireEvent.click(within(managed()).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByText(/delete a\.example\.com\?/i)).toBeNull()
     expect(server.to('DELETE', `/api/managed-sites/${A}`)).toHaveLength(0)
   })

@@ -1,8 +1,9 @@
 <script>
-  import BarChart from '../components/BarChart.svelte'
+  import LineChart from '../components/LineChart.svelte'
   import Segmented from '../components/Segmented.svelte'
   import { compare, describeItems } from '../lib/attention.js'
   import { formatCount, formatMs, formatPercent } from '../lib/format.js'
+  import { statusShares } from '../lib/metrics.js'
   import { flattenUpstreams, sortFailingFirst, summarizeUpstreams, visibleUpstreams } from '../lib/upstreams.js'
 
   /**
@@ -11,6 +12,8 @@
    *   sites?: {sites: Array<{server: string, host: string, upstreams: Array<object>}>, upstreamCheck?: boolean} | null,
    *   summary?: object | null,
    *   traffic?: {resolution?: string, buckets: Array<{start: string, requests: number}>|null} | null,
+   *   previousTraffic?: {buckets: Array<{start: string, requests: number}>|null} | null,
+   *   hosts?: Array<{host: string, requests: number}> | null,
    *   attention?: Array<object> | null,
    *   range?: '1h'|'24h'|'7d',
    *   onrange?: (range: string) => void,
@@ -23,6 +26,8 @@
     sites = null,
     summary = null,
     traffic = null,
+    previousTraffic = null,
+    hosts = null,
     attention = null,
     range = '24h',
     onrange = () => {},
@@ -66,6 +71,23 @@
     }
     return null
   })
+
+  const shares = $derived(statusShares(summary?.status))
+  const showStatus = $derived(!historyOff && Boolean(summary) && shares.length > 0)
+  const showSites = $derived(Boolean(status?.caddy.reachable) && Boolean(sites))
+  // The line above the list: how the upstreams stand, and that the list is in that order.
+  const upstreamCaption = $derived(
+    [
+      counts.down > 0 ? `${counts.down} down` : null,
+      counts.unknown > 0 ? `${counts.unknown} unknown` : null,
+      counts.answering > 0 ? `${counts.answering} answering` : null,
+      'worst first',
+    ]
+      .filter(Boolean)
+      .join(' · '),
+  )
+  const shareText = (share) => `${formatPercent(share)}`
+  const totalRequests = $derived(summary?.requests ?? 0)
 
   const trafficTitle = $derived(traffic?.resolution === 'minute' ? 'Requests per minute' : 'Requests per hour')
   const plural = (n, one, many) => (n === 1 ? one : many)
@@ -131,7 +153,7 @@
   <div class="main">
     {#if !historyOff && traffic}
       <section class="chartcard" aria-label="Traffic">
-        <BarChart title={trafficTitle} buckets={traffic.buckets ?? []} labels={range === '7d' ? 'date' : 'time'} />
+        <LineChart title={trafficTitle} buckets={traffic.buckets ?? []} previous={previousTraffic?.buckets ?? null} labels={range === '7d' ? 'date' : 'time'} />
       </section>
     {/if}
 
@@ -167,41 +189,77 @@
     {/if}
   </div>
 
-  {#if caddy.reachable && sites}
-    <section class="upstreams" aria-label="Sites and upstreams">
-      <div class="head">
-        <h2>Sites and upstreams</h2>
-        {#if !sites.upstreamCheck}<span class="muted">The upstream check is off</span>{/if}
-      </div>
-      {#if rows.length === 0}
-        <p class="empty">No upstreams in Caddy's configuration.</p>
-      {:else}
-        <ul>
-          {#each visible.rows as row (row.host + row.address)}
-            <li data-state={row.state}>
-              <span class="mark" aria-hidden="true"></span>
-              <div class="body">
-                <div class="nm">{row.host || '(any host)'}</div>
-                <div class="sub">{row.address}</div>
-              </div>
-              <div class="st">
-                <div class="word">{row.state}</div>
-                {#if row.state === 'answering'}
-                  <div class="detail">
-                    {formatMs(row.latencyMs)}{#if row.httpStatus != null && (row.httpStatus < 200 || row.httpStatus > 299)}, answers {row.httpStatus}{/if}
+  {#if showStatus || hosts || showSites}
+    <section class="quiet" aria-label="Details">
+      {#if showStatus}
+        <section class="q" aria-label="Status codes">
+          <h2>Status codes</h2>
+          <div class="sbar" role="img" aria-label={shares.map((x) => `${shareText(x.share)} ${x.key}`).join(', ')}>
+            {#each shares as x (x.key)}<i data-class={x.key} style:width="{(x.share * 100).toFixed(2)}%"></i>{/each}
+          </div>
+          <ul class="rows">
+            {#each shares as x (x.key)}
+              <li><span><i class="dot" data-class={x.key} aria-hidden="true"></i>{x.key}</span><span class="num">{shareText(x.share)}</span></li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+      {#if hosts && !historyOff}
+        <section class="q" aria-label="Top hosts">
+          <h2>Top hosts</h2>
+          {#if hosts.length === 0}
+            <p class="empty">No traffic in this period.</p>
+          {:else}
+            <ul class="rows">
+              {#each hosts as h (h.host)}
+                <li class="block">
+                  <div class="line"><span>{h.host || '(no host)'}</span><span class="num">{formatCount(h.requests)}</span></div>
+                  <div class="thin"><i style:width="{totalRequests > 0 ? Math.min(100, (h.requests / totalRequests) * 100).toFixed(1) : 0}%"></i></div>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
+      {#if showSites}
+        <section class="q upstreams" aria-label="Sites and upstreams">
+          <h2>Sites and upstreams</h2>
+          {#if !sites.upstreamCheck}
+            <div class="cap">The upstream check is off</div>
+          {:else if rows.length > 0}
+            <div class="cap">{upstreamCaption}</div>
+          {/if}
+          {#if rows.length === 0}
+            <p class="empty">No upstreams in Caddy's configuration.</p>
+          {:else}
+            <ul class="rows sites">
+              {#each visible.rows as row (row.host + row.address)}
+                <li data-state={row.state}>
+                  <span class="mark" aria-hidden="true"></span>
+                  <div class="body">
+                    <div class="nm">{row.host || '(any host)'}</div>
+                    <div class="sub">{row.address}</div>
                   </div>
-                {:else if row.state === 'down'}
-                  <div class="detail">no answer{row.siblings > 1 ? `, one of ${row.siblings}` : ''}</div>
-                {/if}
-              </div>
-            </li>
-          {/each}
-        </ul>
-        {#if visible.hidden > 0}
-          <button class="more" type="button" onclick={() => (expanded = true)}>Show {visible.hidden} more</button>
-        {:else if expanded && rows.length > SHOWN}
-          <button class="more" type="button" onclick={() => (expanded = false)}>Show less</button>
-        {/if}
+                  <div class="st">
+                    <div class="word">{row.state}</div>
+                    {#if row.state === 'answering'}
+                      <div class="detail">
+                        {formatMs(row.latencyMs)}{#if row.httpStatus != null && (row.httpStatus < 200 || row.httpStatus > 299)}, answers {row.httpStatus}{/if}
+                      </div>
+                    {:else if row.state === 'down'}
+                      <div class="detail">no answer{row.siblings > 1 ? `, one of ${row.siblings}` : ''}</div>
+                    {/if}
+                  </div>
+                </li>
+              {/each}
+            </ul>
+            {#if visible.hidden > 0}
+              <button class="more" type="button" onclick={() => (expanded = true)}>Show {visible.hidden} more</button>
+            {:else if expanded && rows.length > SHOWN}
+              <button class="more" type="button" onclick={() => (expanded = false)}>Show less</button>
+            {/if}
+          {/if}
+        </section>
       {/if}
     </section>
   {/if}
@@ -261,7 +319,6 @@
     background: var(--bad);
   }
   .why,
-  .muted,
   .empty,
   .quiet {
     color: var(--muted);
@@ -425,33 +482,125 @@
     display: block;
   }
 
-  .upstreams .head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--border);
+  .quiet {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 3rem;
+    margin-bottom: 2.5rem;
   }
-  ul {
-    margin: 0;
+  .cap {
+    margin-top: 0.7rem;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  @media (max-width: 64rem) {
+    .quiet {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 2.5rem;
+    }
+  }
+  .q h2 {
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line2);
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .sbar {
+    display: flex;
+    height: 0.65rem;
+    margin: 1.1rem 0 0.5rem;
+    gap: 2px;
+    overflow: hidden;
+    border-radius: 0.35rem;
+  }
+  .sbar i {
+    display: block;
+    height: 100%;
+    min-width: 3px;
+    background: var(--ok);
+  }
+  .rows .dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-right: 0.5rem;
+    border-radius: 50%;
+    background: var(--ok);
+  }
+  .sbar i[data-class='3xx'],
+  .rows .dot[data-class='3xx'] {
+    background: var(--info);
+  }
+  .sbar i[data-class='4xx'],
+  .rows .dot[data-class='4xx'] {
+    background: var(--warn);
+  }
+  .sbar i[data-class='5xx'],
+  .rows .dot[data-class='5xx'] {
+    background: var(--bad);
+  }
+  .sbar i[data-class='1xx'],
+  .sbar i[data-class='other'],
+  .rows .dot[data-class='1xx'],
+  .rows .dot[data-class='other'] {
+    background: var(--faint);
+  }
+  .rows {
+    margin: 0.5rem 0 0;
     padding: 0;
     list-style: none;
   }
-  li {
+  .rows li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+  }
+  .rows li.block {
+    display: block;
+  }
+  .rows .line {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .rows .num {
+    color: var(--muted);
+    font: 400 0.85rem / 1.4 var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .thin {
+    height: 3px;
+    margin-top: 0.45rem;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--border);
+  }
+  .thin i {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
+  .sites li {
     display: flex;
     align-items: center;
-    gap: 0.9rem;
-    padding: 0.85rem 0.75rem;
+    gap: 0.8rem;
+    padding: 0.7rem 0.6rem;
     border-bottom: 1px solid var(--border);
     border-radius: var(--radius);
   }
-  li[data-state='down'] {
+  .sites li[data-state='down'] {
     background: var(--bad-soft);
     border-bottom-color: transparent;
   }
-  li .mark {
+  .sites li .mark {
     margin-top: 0;
   }
   .body {
@@ -460,7 +609,7 @@
   }
   .nm {
     overflow: hidden;
-    font: 600 1.05rem / 1.2 var(--display);
+    font: 600 1rem / 1.2 var(--display);
     letter-spacing: -0.01em;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -478,14 +627,14 @@
     text-align: right;
     font-size: 0.85rem;
   }
-  li[data-state='down'] .word {
+  .sites li[data-state='down'] .word {
     color: var(--bad);
     font-weight: 600;
   }
-  li[data-state='answering'] .word {
+  .sites li[data-state='answering'] .word {
     color: var(--ok);
   }
-  li[data-state='unknown'] .word {
+  .sites li[data-state='unknown'] .word {
     color: var(--muted);
   }
   .detail {

@@ -28,6 +28,11 @@ const trafficAnswer = (resolution = 'hour', buckets) => ({
   ],
 })
 
+const previousBuckets = [
+  bucket('2026-10-27T10:00:00Z', 100, 10000, { '2xx': 100 }, 20, 400),
+  bucket('2026-10-27T11:00:00Z', 200, 20000, { '2xx': 199, '5xx': 1 }, 30, 900),
+]
+
 const host = (name, requests, errors5xx = 0) => ({
   host: name,
   requests,
@@ -42,12 +47,17 @@ const hostsAnswer = (list = [host('app.example.com', 300), host('api.example.com
 
 // api builds the fake server; `routes` overrides what /api/traffic and /api/hosts answer, as functions of the parameters.
 function api(routes = {}) {
-  const calls = { traffic: [], hosts: [], attention: [] }
+  const calls = { traffic: [], previous: [], hosts: [], attention: [] }
   vi.stubGlobal(
     'fetch',
     vi.fn((url) => {
       const u = new URL(url, 'http://x')
       const params = Object.fromEntries(u.searchParams)
+      if (u.pathname === '/api/traffic' && params.to !== NOW.toISOString().replace('.000Z', 'Z')) {
+        // The period before this one ends where this one starts.
+        calls.previous.push(params)
+        return (routes.previous ?? (() => json(trafficAnswer(params.resolution, previousBuckets))))(params)
+      }
       if (u.pathname === '/api/traffic') {
         calls.traffic.push(params)
         return (routes.traffic ?? ((p) => json(trafficAnswer(p.resolution))))(params)
@@ -94,7 +104,7 @@ describe('MetricsView needs attention', () => {
 
   it('asks again when the period changes', async () => {
     const { calls } = await open()
-    await choosePeriod('7 days')
+    await choosePeriod('7d')
     await waitFor(() => expect(calls.attention.at(-1)).toEqual({ window: '7d' }))
   })
 
@@ -105,7 +115,7 @@ describe('MetricsView needs attention', () => {
 
   it('is left out for a period the server does not answer', async () => {
     const { calls } = await open()
-    await choosePeriod('30 days')
+    await choosePeriod('30d')
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull())
     expect(calls.attention.every((c) => c.window !== '30d')).toBe(true)
   })
@@ -124,10 +134,10 @@ describe('MetricsView needs attention', () => {
 })
 
 describe('MetricsView loading', () => {
-  it('has a title and a one-line subtitle', async () => {
+  it('has a title, and says what the figures are compared with', async () => {
     await open()
     expect(screen.getByRole('heading', { level: 1, name: 'Metrics' })).toBeTruthy()
-    expect(screen.getByText(/requests, status codes and response times/i)).toBeTruthy()
+    expect(screen.getByText(/from the access log, compared with the previous 24 hours/i)).toBeTruthy()
   })
 
   it('says it is loading before the first answer', () => {
@@ -149,10 +159,10 @@ describe('MetricsView loading', () => {
     await open()
     const group = screen.getByRole('radiogroup', { name: 'Period' })
     expect(within(group).getAllByRole('radio').map((r) => [r.textContent.trim(), r.getAttribute('aria-checked')])).toEqual([
-      ['1 hour', 'false'],
-      ['24 hours', 'true'],
-      ['7 days', 'false'],
-      ['30 days', 'false'],
+      ['1h', 'false'],
+      ['24h', 'true'],
+      ['7d', 'false'],
+      ['30d', 'false'],
     ])
   })
 })
@@ -161,30 +171,35 @@ describe('MetricsView content', () => {
   it('totals the period in tiles', async () => {
     await open()
     expect(within(tile('Requests')).getByText('400')).toBeTruthy()
-    expect(within(tile('Traffic')).getByText('39.1 KB')).toBeTruthy()
-    expect(within(tile('Server errors')).getByText('1 %')).toBeTruthy()
-    expect(within(tile('Server errors')).getByText('4 requests')).toBeTruthy()
+    expect(within(tile('Data sent')).getByText('39.1 KB')).toBeTruthy()
+    expect(within(tile('5xx rate')).getByText('1 %')).toBeTruthy()
+    expect(within(tile('5xx rate')).getByText('4 of 400 requests')).toBeTruthy()
     expect(within(tile('Avg. response time')).getByText('35 ms')).toBeTruthy()
     expect(within(tile('Avg. response time')).getByText('max 3 s')).toBeTruthy()
   })
 
   it('marks the tile of server errors', async () => {
     await open()
-    expect(tile('Server errors').dataset.tone).toBe('bad')
+    await waitFor(() => expect(tile('5xx rate').dataset.tone).toBe('bad'))
   })
 
-  it('draws the requests of each hour', async () => {
+  it('draws the requests over time as a line', async () => {
     const { container } = await open()
     expect(screen.getByRole('heading', { name: 'Requests per hour' })).toBeTruthy()
-    expect(container.querySelectorAll('rect[data-bar]')).toHaveLength(2)
+    expect(container.querySelector('path[data-series="current"]')).toBeTruthy()
+    expect(container.querySelector('rect[data-bar]')).toBeNull()
   })
 
-  it('shows the share of each status class', async () => {
+  it('draws the previous period beside it', async () => {
+    const { calls } = await open()
+    expect(await screen.findByText('Previous period')).toBeTruthy()
+    expect(calls.previous).toEqual([{ resolution: 'hour', from: '2026-10-26T12:00:00Z', to: '2026-10-27T12:00:00Z' }])
+  })
+
+  it('has the status classes in the hosts table, not in a table of their own', async () => {
     await open()
-    const table = screen.getByRole('table', { name: 'Status codes' })
-    const rows = within(table).getAllByRole('row').slice(1)
-    expect(rows.map((r) => r.querySelector('td').textContent.trim())).toEqual(['2xx', '4xx', '5xx'])
-    expect(table.textContent).toContain('387')
+    expect(screen.queryByRole('table', { name: 'Status codes' })).toBeNull()
+    expect(within(screen.getByRole('table', { name: 'Hosts' })).getAllByRole('columnheader').map((h) => h.textContent.trim())).toContain('Status codes')
   })
 
   it('lists the hosts', async () => {
@@ -199,9 +214,8 @@ describe('MetricsView content', () => {
     await open({ traffic: () => json(empty), hosts: () => json(hostsAnswer([])) })
     expect(within(tile('Requests')).getByText('0')).toBeTruthy()
     expect(within(tile('Avg. response time')).getByText('–')).toBeTruthy()
-    expect(within(tile('Server errors')).getByText('–')).toBeTruthy()
+    expect(within(tile('5xx rate')).getByText('–')).toBeTruthy()
     expect(screen.getAllByText('No traffic in this period').length).toBeGreaterThanOrEqual(2)
-    expect(screen.getByText('No requests')).toBeTruthy()
   })
 
   it('renders hostile host names as text', async () => {
@@ -211,10 +225,30 @@ describe('MetricsView content', () => {
   })
 })
 
+describe('MetricsView against the previous period', () => {
+  it('says how the requests moved', async () => {
+    await open()
+    // 400 requests now, 300 before
+    expect(await within(tile('Requests')).findByText('+33% on the previous period')).toBeTruthy()
+  })
+
+  it('says how many times the 5xx rate is the one before, and marks it when it doubled', async () => {
+    await open()
+    // 4 of 400 now (1 %), 1 of 300 before (0.33 %)
+    expect(await within(tile('5xx rate')).findByText('3.0x the previous period')).toBeTruthy()
+  })
+
+  it('says nothing about it when the previous period cannot be read', async () => {
+    await open({ previous: () => json({ error: 'boom' }, 500) })
+    expect(within(tile('Requests')).queryByText(/previous period/)).toBeNull()
+    expect(screen.queryByText('Previous period')).toBeNull()
+  })
+})
+
 describe('MetricsView periods', () => {
   it('reads the last hour by the minute', async () => {
     const { calls } = await open()
-    await choosePeriod('1 hour')
+    await choosePeriod('1h')
     await waitFor(() => expect(calls.traffic).toHaveLength(2))
     expect(calls.traffic[1]).toEqual({ resolution: 'minute', from: '2026-10-28T11:00:00Z', to: '2026-10-28T12:00:00Z' })
     expect(calls.hosts[1]).toMatchObject({ resolution: 'minute', from: '2026-10-28T11:00:00Z' })
@@ -222,8 +256,8 @@ describe('MetricsView periods', () => {
   })
 
   it.each([
-    ['7 days', '2026-10-21T12:00:00Z'],
-    ['30 days', '2026-09-28T12:00:00Z'],
+    ['7d', '2026-10-21T12:00:00Z'],
+    ['30d', '2026-09-28T12:00:00Z'],
   ])('reads %s by the hour', async (label, from) => {
     const { calls } = await open()
     await choosePeriod(label)
@@ -233,9 +267,9 @@ describe('MetricsView periods', () => {
 
   it('marks the period that is shown', async () => {
     await open()
-    await choosePeriod('7 days')
-    expect(screen.getByRole('radio', { name: '7 days' }).getAttribute('aria-checked')).toBe('true')
-    expect(screen.getByRole('radio', { name: '24 hours' }).getAttribute('aria-checked')).toBe('false')
+    await choosePeriod('7d')
+    expect(screen.getByRole('radio', { name: '7d' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: '24h' }).getAttribute('aria-checked')).toBe('false')
   })
 
   it('labels a day with the time, and several days with their dates', async () => {
@@ -243,7 +277,7 @@ describe('MetricsView periods', () => {
     const { container } = await open()
     const table = () => container.querySelector('details tbody td').textContent
     expect(table()).toBe(formatClock(first))
-    await choosePeriod('7 days')
+    await choosePeriod('7d')
     await waitFor(() => expect(table()).toBe(formatStamp(first)))
   })
 
@@ -256,9 +290,9 @@ describe('MetricsView periods', () => {
       if (u.pathname === '/api/traffic') return new Promise((resolve) => waiting.push({ params, resolve }))
       return json(hostsAnswer())
     })
-    await choosePeriod('7 days')
+    await choosePeriod('7d')
     await waitFor(() => expect(waiting).toHaveLength(1))
-    await choosePeriod('30 days')
+    await choosePeriod('30d')
     await waitFor(() => expect(waiting).toHaveLength(2))
 
     waiting[1].resolve(ok(trafficAnswer('hour', [bucket('2026-10-28T10:00:00Z', 7, 700, { '2xx': 7 }, 5, 9)])))
@@ -308,7 +342,7 @@ describe('MetricsView host filter', () => {
     const { calls } = await open()
     await fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'app.example.com' } })
     await waitFor(() => expect(calls.traffic).toHaveLength(2))
-    await choosePeriod('7 days')
+    await choosePeriod('7d')
     await waitFor(() => expect(calls.traffic).toHaveLength(3))
     expect(calls.traffic[2]).toMatchObject({ host: 'app.example.com', from: '2026-10-21T12:00:00Z' })
   })
@@ -318,7 +352,7 @@ describe('MetricsView host filter', () => {
     const { calls } = await open({ hosts: () => json(++call === 1 ? hostsAnswer() : hostsAnswer([host('other.example.com', 1)])) })
     await fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'app.example.com' } })
     await waitFor(() => expect(calls.traffic).toHaveLength(2))
-    await choosePeriod('1 hour')
+    await choosePeriod('1h')
     await waitFor(() => expect(calls.hosts).toHaveLength(2))
     const select = screen.getByLabelText('Host')
     await waitFor(() => expect(Array.from(select.options).map((o) => o.value)).toContain('other.example.com'))

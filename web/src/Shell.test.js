@@ -317,6 +317,33 @@ describe('App dashboard history', () => {
     expect((await screen.findByRole('img')).getAttribute('aria-label')).toContain('Requests per hour')
   })
 
+  it('shows the busiest hosts of the range', async () => {
+    openAt('/')
+    const top = await screen.findByRole('region', { name: 'Top hosts' })
+    expect(within(top).getByText('app.example.com')).toBeTruthy()
+    const urls = fetch.mock.calls.map((c) => c[0])
+    expect(urls.some((u) => u.startsWith('/api/hosts?resolution=hour') && u.includes('limit=5'))).toBe(true)
+  })
+
+  it('asks for the period before, to draw beside this one', async () => {
+    openAt('/')
+    await screen.findByRole('group', { name: 'Requests' })
+    await vi.waitFor(() => {
+      const urls = fetch.mock.calls.map((c) => c[0])
+      expect(urls.some((u) => /^\/api\/traffic\?resolution=hour&from=[^&]+&to=/.test(u))).toBe(true)
+    })
+    expect(await screen.findByText('Previous period')).toBeTruthy()
+  })
+
+  it('still shows the dashboard when the hosts or the previous period cannot be read', async () => {
+    const base = fakeFetch
+    vi.stubGlobal('fetch', vi.fn((url) => (url.startsWith('/api/hosts') || url.includes('&to=') ? Promise.reject(new TypeError('boom')) : base(url))))
+    openAt('/')
+    expect(await screen.findByRole('group', { name: 'Requests' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Top hosts' })).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('lists what needs attention', async () => {
     attentionItems = [{ kind: 'host_slow', severity: 'warn', host: 'slow.example.com', p95Ms: 640, medianP95Ms: 71 }]
     openAt('/')

@@ -1,19 +1,17 @@
 <script>
-  import BarChart from '../components/BarChart.svelte'
+  import LineChart from '../components/LineChart.svelte'
   import HostsTable from '../components/HostsTable.svelte'
   import Segmented from '../components/Segmented.svelte'
-  import StatusBar from '../components/StatusBar.svelte'
   import Tile from '../components/Tile.svelte'
   import { getAttention, getHosts, getTraffic } from '../lib/api.js'
-  import { describeItems } from '../lib/attention.js'
+  import { compare, describeItems } from '../lib/attention.js'
   import { formatBytes, formatCount, formatMs, formatPercent } from '../lib/format.js'
   import { PERIODS, chartTitle, periodById, periodRange, summarize } from '../lib/metrics.js'
 
   /** @type {{now?: () => Date}} */
   let { now = () => new Date() } = $props()
 
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
-  const periodOptions = PERIODS.map((p) => ({ value: p.id, label: p.label }))
+  const periodOptions = PERIODS.map((p) => ({ value: p.id, label: p.id }))
 
   let periodId = $state('24h')
   let host = $state('')
@@ -25,6 +23,8 @@
   /** @type {Array<any> | null} null when the hosts could not be read */
   let hosts = $state(null)
 
+  /** @type {{buckets: Array<any> | null} | null} the period of the same length right before, null when it cannot be read */
+  let previousTraffic = $state(null)
   /** @type {Array<any> | null} null when it cannot be read, or the period is not one the server answers */
   let attention = $state(null)
   // The periods /api/attention answers; a month is longer than it looks back.
@@ -58,6 +58,9 @@
     return out
   })
   const sum = $derived(summarize(traffic?.buckets))
+  const prev = $derived(previousTraffic ? summarize(previousTraffic.buckets) : null)
+  const requestsCompare = $derived(prev ? compare(sum.requests, prev.requests) : null)
+  const errorsCompare = $derived(prev ? compare(sum.errorRate, prev.errorRate, { times: true, worseWhenHigher: true }) : null)
   // The host that is chosen stays in the list even when this period has no traffic from it.
   const hostNames = $derived.by(() => {
     const names = (hosts ?? []).map((h) => h.host).filter((name) => name !== '')
@@ -76,6 +79,7 @@
       traffic = answer
       phase = 'ready'
       error = ''
+      loadPrevious(range, id)
     } catch (err) {
       if (id !== trafficSeq) return
       // Without a history the routes are not there at all: that is a setting, not a failure.
@@ -84,6 +88,18 @@
         phase = 'failed'
         error = err.message
       }
+    }
+  }
+
+  // The period before ends where this one starts, and is as long. It only completes the picture.
+  async function loadPrevious(range, id) {
+    const span = new Date(range.to).getTime() - new Date(range.from).getTime()
+    const from = new Date(new Date(range.from).getTime() - span).toISOString().replace(/\.\d{3}Z$/, 'Z')
+    try {
+      const answer = await getTraffic(range.resolution, { from, to: range.from, host })
+      if (id === trafficSeq) previousTraffic = answer
+    } catch {
+      if (id === trafficSeq) previousTraffic = null
     }
   }
 
@@ -120,7 +136,7 @@
 
 <header class="pagehead">
   <div>
-    <div class="eyebrow">Requests, status codes and response times from Caddy's access log</div>
+    <div class="eyebrow">From the access log, compared with the previous {period.id === '1h' ? 'hour' : period.id === '24h' ? '24 hours' : period.id === '7d' ? '7 days' : '30 days'}</div>
     <h1>Metrics</h1>
   </div>
   {#if phase !== 'off'}
@@ -150,20 +166,26 @@
     <p class="empty">Loading…</p>
   {:else}
     <div class="tiles">
-      <Tile label="Requests" value={formatCount(sum.requests)} />
-      <Tile label="Traffic" value={formatBytes(sum.bytes)} />
+      <Tile label="Requests" value={formatCount(sum.requests)} detail={requestsCompare?.text ?? ''} />
+      <Tile label="Data sent" value={formatBytes(sum.bytes)} detail={sum.requests > 0 ? `${formatBytes(sum.bytes / sum.requests)} per request` : ''} />
       <Tile
-        label="Server errors"
+        label="5xx rate"
         value={formatPercent(sum.errorRate)}
-        detail={plural(sum.errors5xx, 'request')}
-        tone={sum.errors5xx > 0 ? 'bad' : undefined}
+        detail={`${sum.errors5xx} of ${formatCount(sum.requests)} requests`}
+        extra={errorsCompare?.text ?? ''}
+        tone={errorsCompare?.tone ?? (sum.errors5xx > 0 ? 'warn' : undefined)}
       />
       <Tile label="Avg. response time" value={formatMs(sum.avgMs)} detail={sum.maxMs === null ? '' : `max ${formatMs(sum.maxMs)}`} />
     </div>
 
     <div class="main">
       <div class="card chart">
-        <BarChart title={chartTitle(traffic?.resolution ?? period.resolution)} buckets={traffic?.buckets ?? []} labels={period.hours > 24 ? 'date' : 'time'} />
+        <LineChart
+          title={chartTitle(traffic?.resolution ?? period.resolution)}
+          buckets={traffic?.buckets ?? []}
+          previous={previousTraffic?.buckets ?? null}
+          labels={period.hours > 24 ? 'date' : 'time'}
+        />
       </div>
 
       {#if items}
@@ -183,11 +205,6 @@
         </section>
       {/if}
     </div>
-
-    <section class="card" aria-labelledby="status-heading">
-      <h2 id="status-heading">Status codes</h2>
-      <StatusBar status={sum.status} />
-    </section>
 
     <section class="card flush" aria-labelledby="hosts-heading">
       <h2 id="hosts-heading">Hosts</h2>
@@ -271,10 +288,12 @@
     border-radius: var(--radius-lg);
     background: linear-gradient(155deg, var(--accent-soft), transparent 52%), var(--surface);
   }
+  /* the hosts: a title over a table, with no box around them */
   .card.flush {
-    padding-bottom: 0.5rem;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
     background: transparent;
-    border-color: var(--border);
   }
   .card.flush h2 {
     margin-bottom: 0.25rem;

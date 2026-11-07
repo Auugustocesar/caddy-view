@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { REDIRECT_CODES, describeSite, emptyForm, errorsByField, formFromSite, isProtected, payloadFromForm } from './site-form.js'
+import { REDIRECT_CODES, emptyForm, errorsByField, formFromSite, isProtected, payloadFromForm, siteSub, tlsLabel } from './site-form.js'
 
 const proxySite = {
   id: 'a'.repeat(32),
@@ -151,17 +151,32 @@ describe('errorsByField', () => {
   })
 })
 
-describe('describeSite', () => {
-  it('says where a proxy goes', () => {
-    expect(describeSite(proxySite)).toBe('Proxy to https://10.0.0.5:8443, 10.0.0.6:8443')
+describe('siteSub', () => {
+  it('lists the upstreams of a proxy, and says when their certificate is not checked', () => {
+    expect(siteSub({ ...proxySite, skipTlsVerify: false })).toBe('https://10.0.0.5:8443, 10.0.0.6:8443')
+    expect(siteSub(proxySite)).toBe('https://10.0.0.5:8443, 10.0.0.6:8443, TLS not verified')
   })
 
-  it('says where a redirect goes, and with which code', () => {
-    expect(describeSite(redirectSite)).toBe('Redirect to https://new.example.com{uri} (308)')
+  it('says where a redirect goes and with which code', () => {
+    expect(siteSub(redirectSite)).toBe('308 to https://new.example.com{uri}')
   })
 
-  it('does not break on a site with no upstreams', () => {
-    expect(describeSite({ ...proxySite, upstreams: [] })).toBe('Proxy')
+  it('has nothing to say of a proxy without upstreams', () => {
+    expect(siteSub({ ...proxySite, upstreams: [], skipTlsVerify: false })).toBe('')
+  })
+})
+
+describe('tlsLabel', () => {
+  it.each([
+    ['automatic', 'Automatic TLS'],
+    ['internal', 'Internal CA'],
+    ['off', 'Plain HTTP'],
+  ])('calls %s %s', (tls, label) => {
+    expect(tlsLabel(tls)).toBe(label)
+  })
+
+  it('gives an unknown value back as it is', () => {
+    expect(tlsLabel('quantum')).toBe('quantum')
   })
 })
 

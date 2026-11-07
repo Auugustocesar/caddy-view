@@ -180,6 +180,88 @@ describe('Dashboard chart', () => {
   })
 })
 
+describe('Dashboard chart, against the previous period', () => {
+  it('is a line, with the previous period beside it when it is known', () => {
+    const { container } = render(Dashboard, { status: reachable, sites, summary, traffic, previousTraffic: traffic })
+    expect(container.querySelector('path[data-series="current"]')).toBeTruthy()
+    expect(container.querySelector('rect[data-bar]')).toBeNull()
+    expect(screen.getByText('Previous period')).toBeTruthy()
+  })
+
+  it('has no previous line without the previous period', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(screen.queryByText('Previous period')).toBeNull()
+  })
+})
+
+describe('Dashboard status codes', () => {
+  const codes = () => within(screen.getByRole('region', { name: 'Status codes' }))
+  const withStatus = { ...summary, requests: 1000, status: { '2xx': 941, '3xx': 32, '4xx': 24, '5xx': 3, '1xx': 0, other: 0 } }
+
+  it('shows the share of each class that has requests', () => {
+    render(Dashboard, { status: reachable, sites, summary: withStatus, traffic })
+    const rows = codes().getAllByRole('listitem')
+    expect(rows.map((r) => Array.from(r.querySelectorAll('span')).map((x) => x.textContent))).toEqual([
+      ['2xx', '94.1 %'],
+      ['3xx', '3.2 %'],
+      ['4xx', '2.4 %'],
+      ['5xx', '0.3 %'],
+    ])
+  })
+
+  it('draws them as one bar, with the shares for those who cannot see it', () => {
+    render(Dashboard, { status: reachable, sites, summary: withStatus, traffic })
+    expect(codes().getByRole('img').getAttribute('aria-label')).toContain('94.1 % 2xx')
+  })
+
+  it('is left out without requests', () => {
+    render(Dashboard, { status: reachable, sites, summary: { ...summary, requests: 0, status: {} }, traffic })
+    expect(screen.queryByRole('region', { name: 'Status codes' })).toBeNull()
+  })
+})
+
+describe('Dashboard top hosts', () => {
+  const hosts = [
+    { host: 'app.example.com', requests: 4000 },
+    { host: 'api.example.com', requests: 2000 },
+    { host: 'static.example.com', requests: 811 },
+  ]
+  const top = () => within(screen.getByRole('region', { name: 'Top hosts' }))
+
+  it('lists the busiest hosts with how many requests each had', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, hosts })
+    const rows = top().getAllByRole('listitem')
+    expect(rows.map((r) => Array.from(r.querySelectorAll('span')).map((x) => x.textContent))).toEqual([
+      ['app.example.com', '4,000'],
+      ['api.example.com', '2,000'],
+      ['static.example.com', '811'],
+    ])
+  })
+
+  it('draws each as a share of the requests of the whole period', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, hosts })
+    const bars = top().getAllByRole('listitem').map((r) => r.querySelector('.thin i').style.width)
+    expect(bars[0]).toBe('58.7%')
+    expect(Number.parseFloat(bars[1])).toBeCloseTo(29.4, 1)
+  })
+
+  it('renders hostile names as text', () => {
+    const { container } = render(Dashboard, { status: reachable, sites, summary, traffic, hosts: [{ host: '<img src=x>', requests: 5 }] })
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('<img src=x>')).toBeTruthy()
+  })
+
+  it('says so when there was no traffic from any host', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic, hosts: [] })
+    expect(top().getByText(/no traffic/i)).toBeTruthy()
+  })
+
+  it('is left out when the hosts could not be read', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    expect(screen.queryByRole('region', { name: 'Top hosts' })).toBeNull()
+  })
+})
+
 describe('Dashboard needs attention', () => {
   const items = [
     { kind: 'upstream_down', severity: 'bad', host: 'admin.example.com', down: ['10.0.9.9:3000'], total: 1 },
@@ -222,6 +304,38 @@ describe('Dashboard needs attention', () => {
   it('has no section without attention data', () => {
     render(Dashboard, { status: reachable, sites, summary, traffic })
     expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull()
+  })
+})
+
+describe('Dashboard details row', () => {
+  const hosts = [{ host: 'app.example.com', requests: 4000 }]
+  const withStatus = { ...summary, requests: 1000, status: { '2xx': 941, '3xx': 32, '4xx': 24, '5xx': 3 } }
+
+  it('has status codes, top hosts and the sites and upstreams side by side, in one row', () => {
+    render(Dashboard, { status: reachable, sites, summary: withStatus, traffic, hosts })
+    const row = screen.getByRole('region', { name: 'Details' })
+    for (const name of ['Status codes', 'Top hosts', 'Sites and upstreams']) {
+      expect(within(row).getByRole('region', { name })).toBeTruthy()
+    }
+  })
+
+  it('still has the sites and upstreams when there is no history', () => {
+    render(Dashboard, { status: reachable, sites, historyOff: true })
+    const row = screen.getByRole('region', { name: 'Details' })
+    expect(within(row).getByRole('region', { name: 'Sites and upstreams' })).toBeTruthy()
+    expect(within(row).queryByRole('region', { name: 'Status codes' })).toBeNull()
+  })
+
+  it('sums the upstreams up above the list, worst first', () => {
+    render(Dashboard, { status: reachable, sites, summary, traffic })
+    const caption = within(screen.getByRole('region', { name: 'Sites and upstreams' })).getByText(/worst first/)
+    expect(caption.textContent).toBe('1 down · 2 answering · worst first')
+  })
+
+  it('counts the unknown ones apart in that line', () => {
+    const far = { ...sites, sites: [{ server: 's', host: 'far.example.com', upstreams: [up('172.16.0.1:80', 'unknown')] }] }
+    render(Dashboard, { status: reachable, sites: far, summary, traffic })
+    expect(within(screen.getByRole('region', { name: 'Sites and upstreams' })).getByText(/worst first/).textContent).toBe('1 unknown · worst first')
   })
 })
 

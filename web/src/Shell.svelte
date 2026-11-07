@@ -1,5 +1,5 @@
 <script>
-  import { ApiError, getAttention, getConfig, getSites, getStatus, getSummary, getTraffic, reportUnauthorized } from './lib/api.js'
+  import { ApiError, getAttention, getConfig, getHosts, getSites, getStatus, getSummary, getTraffic, reportUnauthorized } from './lib/api.js'
   import { LogStream } from './lib/logstream.js'
   import { startPolling } from './lib/poller.js'
   import { TABS, tabFromPath } from './lib/router.js'
@@ -69,6 +69,8 @@
   let sites = $state(null)
   let summary = $state(null)
   let traffic = $state(null)
+  let previousTraffic = $state(null)
+  let hosts = $state(null)
   let attention = $state(null)
   let historyOff = $state(false)
   let dashboardError = $state('')
@@ -79,6 +81,21 @@
     if (window === '1h') return getTraffic('minute')
     if (window === '7d') return getTraffic('hour', { from: new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString() })
     return getTraffic('hour')
+  }
+
+  const SPANS = { '1h': 3600, '24h': 24 * 3600, '7d': 7 * 24 * 3600 }
+  const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z')
+
+  // The period of the same length right before this one, for the chart to draw beside it.
+  function previousTrafficFor(window) {
+    const span = SPANS[window] * 1000
+    const now = Date.now()
+    return getTraffic(window === '1h' ? 'minute' : 'hour', { from: iso(now - 2 * span), to: iso(now - span) })
+  }
+
+  // The busiest hosts of the range.
+  function hostsFor(window) {
+    return getHosts(window === '1h' ? 'minute' : 'hour', { from: iso(Date.now() - SPANS[window] * 1000), limit: 5 }).then((body) => body.hosts)
   }
 
   $effect(() => {
@@ -97,10 +114,12 @@
             (body) => body.items,
             () => null,
           )
+          // The same goes for the period before and the hosts: they complete the picture.
+          ;[previousTraffic, hosts] = await Promise.all([previousTrafficFor(window).catch(() => null), hostsFor(window).catch(() => null)])
         } catch (err) {
           // Without a history the routes are not there at all: that is a setting, not a failure.
           if (!(err instanceof ApiError && err.status === 404)) throw err
-          summary = traffic = attention = null
+          summary = traffic = attention = previousTraffic = hosts = null
           historyOff = true
         }
         dashboardError = ''
@@ -196,7 +215,7 @@
 
 <main>
   {#if tab === 'dashboard'}
-    <Dashboard {status} {sites} {summary} {traffic} {attention} {range} onrange={(value) => (range = value)} {historyOff} loadError={dashboardError} />
+    <Dashboard {status} {sites} {summary} {traffic} {previousTraffic} {hosts} {attention} {range} onrange={(value) => (range = value)} {historyOff} loadError={dashboardError} />
   {:else if tab === 'sites'}
     <SitesView />
   {:else if tab === 'caddyfile'}
