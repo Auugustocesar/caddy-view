@@ -108,8 +108,17 @@ attention" with one "i" tooltip on its title, and the sites and upstreams failin
 place. Many down sites become one item (four or more). The range (1h, 24h, 7d) is a control of the page; `1h` reads by
 the minute. The tokens of the design (dark and light, orange accent, Bricolage Grotesque, Geist and Geist Mono) are in
 `web/src/app.css`; the fonts are bundled, latin only, and the content security policy gained `font-src 'self'`, so the
-UI still loads nothing from another host. The other screens take the new tokens and the new header; their own layouts
-are the ones they had, and may follow the board of the design in a later pass.
+UI still loads nothing from another host.
+
+The other screens follow their boards too: **Logs** has the filter toolbar (search, 2xx to 5xx pills, host) over a
+table on one surface, and a side panel with the request that was chosen (the log stream now carries the size and the
+client); **Sites** has the managed file strip, the list as rows and the form as a panel beside it; **Caddyfile** has the
+state, the editor and the revisions apart, edited lines marked only by a bar in the margin, an error as the colour of
+its line with the message right under it, and Apply and Revert beside the title; **Metrics** has the same "Needs
+attention" as the Dashboard (for 1h, 24h and 7d) and marks the slow and failing hosts in its table; **Config** has
+flat sections with a hairline instead of cards; **Sign in** is one card with the reset hint. The tabs of the Config
+board (Status, Backups, Account, About) and the Dashboard-style "Caddy reachable" item in the Caddyfile strip are not
+built: the screen has no data for them yet.
 
 ### 6e in detail
 

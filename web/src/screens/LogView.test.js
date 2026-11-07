@@ -11,9 +11,12 @@ const accessLine = line(
     ts: 1700000000.5,
     status: 502,
     duration: 0.0123,
-    request: { method: 'POST', host: 'api.example.com', uri: '/v1/items' },
+    size: 2048,
+    request: { method: 'POST', host: 'api.example.com', uri: '/v1/items', remote_ip: '203.0.113.24' },
   }),
 )
+const okLine = line(JSON.stringify({ ts: 1700000001, status: 200, duration: 0.004, size: 10, request: { method: 'GET', host: 'app.example.com', uri: '/' } }))
+const redirect = line(JSON.stringify({ ts: 1700000002, status: 302, duration: 0.002, size: 0, request: { method: 'GET', host: 'app.example.com', uri: '/login' } }))
 const textLine = line('some plain log text')
 
 function props(overrides = {}) {
@@ -140,5 +143,86 @@ describe('LogView controls', () => {
     render(LogView, p)
     await fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     expect(p.onclear).toHaveBeenCalledOnce()
+  })
+})
+
+describe('LogView status classes', () => {
+  const pill = (name) => screen.getByRole('button', { name })
+
+  it('has a pill for each class, all on to begin with', () => {
+    render(LogView, props({ lines: [accessLine] }))
+    for (const name of ['2xx', '3xx', '4xx', '5xx']) expect(pill(name).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('hides the lines of a class that is turned off, and shows them again', async () => {
+    render(LogView, props({ lines: [accessLine, okLine, redirect] }))
+    await fireEvent.click(pill('2xx'))
+    expect(pill('2xx').getAttribute('aria-pressed')).toBe('false')
+    expect(screen.queryByTestId(`log-${okLine.id}`)).toBeNull()
+    expect(screen.getByTestId(`log-${accessLine.id}`)).toBeTruthy()
+    await fireEvent.click(pill('2xx'))
+    expect(screen.getByTestId(`log-${okLine.id}`)).toBeTruthy()
+  })
+
+  it('keeps the lines that are not requests whatever the pills say', async () => {
+    render(LogView, props({ lines: [textLine, okLine] }))
+    await fireEvent.click(pill('2xx'))
+    expect(screen.getByTestId(`log-${textLine.id}`)).toBeTruthy()
+  })
+})
+
+describe('LogView host', () => {
+  const select = () => screen.getByRole('combobox', { name: 'Host' })
+
+  it('offers the hosts seen, after All hosts', () => {
+    render(LogView, props({ lines: [accessLine, okLine, redirect] }))
+    expect(Array.from(select().options).map((o) => o.textContent)).toEqual(['All hosts', 'api.example.com', 'app.example.com'])
+  })
+
+  it('shows only the lines of the chosen host', async () => {
+    render(LogView, props({ lines: [accessLine, okLine] }))
+    await fireEvent.change(select(), { target: { value: 'app.example.com' } })
+    expect(screen.queryByTestId(`log-${accessLine.id}`)).toBeNull()
+    expect(screen.getByTestId(`log-${okLine.id}`)).toBeTruthy()
+  })
+})
+
+describe('LogView request details', () => {
+  const details = () => screen.getByRole('complementary', { name: 'Request' })
+
+  it('asks for a line to be chosen before one is', () => {
+    render(LogView, props({ lines: [accessLine] }))
+    expect(details().textContent).toMatch(/choose a request/i)
+  })
+
+  it('shows what is known of the request that was chosen', async () => {
+    render(LogView, props({ lines: [accessLine, okLine] }))
+    await fireEvent.click(screen.getByTestId(`log-${accessLine.id}`))
+    const text = details().textContent
+    for (const part of ['POST /v1/items', '502', 'api.example.com', '203.0.113.24', '12 ms', '2.0 KB']) expect(text).toContain(part)
+    expect(screen.getByTestId(`log-${accessLine.id}`).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByTestId(`log-${okLine.id}`).getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('filters to the host of the request chosen', async () => {
+    const p = props({ lines: [accessLine, okLine] })
+    render(LogView, p)
+    await fireEvent.click(screen.getByTestId(`log-${accessLine.id}`))
+    await fireEvent.click(screen.getByRole('button', { name: 'Only this host' }))
+    expect(screen.getByRole('combobox', { name: 'Host' }).value).toBe('api.example.com')
+  })
+
+  it('goes back to asking when the chosen line leaves', async () => {
+    const { rerender } = render(LogView, props({ lines: [accessLine] }))
+    await fireEvent.click(screen.getByTestId(`log-${accessLine.id}`))
+    await rerender(props({ lines: [] }))
+    expect(details().textContent).toMatch(/choose a request/i)
+  })
+
+  it('shows a line that is not a request as text and offers no host', async () => {
+    render(LogView, props({ lines: [textLine] }))
+    await fireEvent.click(screen.getByTestId(`log-${textLine.id}`))
+    expect(details().textContent).toContain('some plain log text')
+    expect(screen.queryByRole('button', { name: 'Only this host' })).toBeNull()
   })
 })

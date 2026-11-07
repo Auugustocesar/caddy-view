@@ -195,9 +195,8 @@
     display: grid;
     gap: 0.2rem;
     color: var(--muted);
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .field input,
@@ -217,9 +216,9 @@
     min-width: 12rem;
   }
   .card {
+    border: 1px solid var(--line2);
     border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    background: linear-gradient(155deg, var(--accent-soft), transparent 55%), var(--surface);
   }
   .scroll {
     padding: 0.25rem 0.5rem;
@@ -243,9 +242,8 @@
   }
   th {
     color: var(--muted);
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .num {
@@ -261,16 +259,25 @@
     font-family: var(--mono);
   }
   .code {
+    padding: 0 0.5rem;
+    border-radius: 999px;
     font-family: var(--mono);
-    font-weight: 600;
+    font-weight: 500;
   }
   .code[data-status='2xx'] {
+    background: var(--ok-soft);
     color: var(--ok);
   }
+  .code[data-status='3xx'] {
+    background: var(--info-soft);
+    color: var(--info);
+  }
   .code[data-status='4xx'] {
+    background: var(--warn-soft);
     color: var(--warn);
   }
   .code[data-status='5xx'] {
+    background: var(--bad-soft);
     color: var(--bad);
   }
   /* On a phone a request is a card of three lines: what it was and where, when and for which host, and how it went. */

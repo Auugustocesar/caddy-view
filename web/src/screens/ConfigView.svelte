@@ -56,8 +56,8 @@
 </script>
 
 <header class="page">
+  <div class="eyebrow">How caddy-view is set up, and what Caddy runs</div>
   <h1>Config</h1>
-  <p class="subtitle">How caddy-view is set up, and what Caddy runs.</p>
 </header>
 
 <div class="toolbar">
@@ -219,60 +219,74 @@
 
 <style>
   .page {
-    margin-bottom: 1.25rem;
+    margin-bottom: 1.75rem;
+  }
+  .eyebrow {
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   h1 {
-    margin: 0;
+    margin: 0.35rem 0 0;
     font: 600 clamp(2.2rem, 4.5vw, 3rem) / 1.05 var(--display);
     letter-spacing: -0.03em;
   }
   h2 {
-    margin: 0 0 0.5rem;
-    font-size: 1.05rem;
-    font-weight: 500;
+    margin: 0 0 0.75rem;
+    font: 600 1.3rem / 1.2 var(--display);
+    letter-spacing: -0.02em;
   }
   .running {
-    margin-top: 2rem;
-  }
-  .subtitle {
-    margin: 0.25rem 0 0;
-    color: var(--muted);
+    margin-top: 3rem;
   }
   .toolbar {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
     color: var(--muted);
   }
   .cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+    gap: 2rem 2.5rem;
   }
+  /* A section of the page: a hairline over it and its label, with no box around it. */
   .card {
-    padding: 1rem 1.25rem;
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow);
     min-width: 0;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line2);
+  }
+  .card h2 {
+    margin: 0 0 0.75rem;
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   dl {
     display: grid;
     grid-template-columns: minmax(0, 8rem) minmax(0, 1fr);
-    gap: 0.35rem 0.75rem;
+    gap: 0;
     margin: 0;
+  }
+  dt,
+  dd {
+    padding: 0.55rem 0;
+    border-bottom: 1px solid var(--border);
   }
   dt {
     color: var(--muted);
-    font-size: 0.75rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    padding-top: 0.15rem;
   }
   dd {
     margin: 0;
+    padding-left: 0.75rem;
     overflow-wrap: anywhere;
+  }
+  dt:last-of-type,
+  dd:last-of-type {
+    border-bottom: 0;
   }
   dd[data-state='ok'] {
     color: var(--ok);
@@ -290,13 +304,13 @@
   }
   pre {
     margin: 0;
-    padding: 1rem;
+    padding: 1rem 1.25rem;
     overflow: auto;
     max-height: 75vh;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border: 1px solid var(--line2);
+    border-radius: var(--radius-lg);
     background: var(--surface);
-    font-size: 0.85rem;
+    font: 400 0.85rem / 1.6 var(--mono);
   }
   .error {
     color: var(--bad);

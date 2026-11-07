@@ -169,7 +169,10 @@
 
 <header>
   <div class="bar">
-    <span class="brand">caddy-view</span>
+    <span class="brand">
+      <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--accent)" /><path d="M20.8 10.3 A7.5 7.5 0 1 0 20.8 21.7" fill="none" stroke="var(--accent-text)" stroke-width="3.2" stroke-linecap="round" /><circle cx="17.6" cy="16" r="2.3" fill="var(--accent-text)" /></svg>
+      caddy-view
+    </span>
     <nav aria-label="Main">
       {#each TABS as t}
         <a href={t.path} aria-current={tab === t.id ? 'page' : undefined} onclick={(e) => navigate(e, t.path)}>
@@ -203,9 +206,13 @@
   {:else if tab === 'metrics'}
     <MetricsView />
   {:else}
-    <div class="view-switch">
+    <section class="pagehead" aria-label="Logs">
+      <div>
+        <div class="eyebrow">{logsView === 'live' ? 'Access log, as it is written' : 'Stored requests, searchable'}</div>
+        <h1>Logs</h1>
+      </div>
       <Segmented label="Logs view" options={LOG_VIEWS} value={logsView} onchange={(view) => (logsView = view)} />
-    </div>
+    </section>
     {#if logsView === 'live'}
       <LogView
         {...logs}
@@ -239,6 +246,9 @@
     padding: 1.1rem 2rem;
   }
   .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
     font: 700 1.3rem / 1 var(--display);
     letter-spacing: -0.025em;
   }
@@ -311,8 +321,24 @@
   .signout .icon {
     display: none;
   }
-  .view-switch {
-    margin-bottom: 1.25rem;
+  .pagehead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .eyebrow {
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 0.35rem 0 0;
+    font: 600 clamp(2.2rem, 4.5vw, 3rem) / 1.05 var(--display);
+    letter-spacing: -0.03em;
   }
   main {
     max-width: 80rem;

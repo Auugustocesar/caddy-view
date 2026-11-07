@@ -48,11 +48,23 @@
   const dirty = $derived(draft !== saved.content)
   const canApply = $derived(dirty && check.state === 'valid' && !busy)
   const markedLine = $derived(failure?.line ? failure.line : check.state === 'invalid' ? check.line : 0)
+  // What is written under the marked line: the refusal of an apply, or Caddy's answer to the check.
+  const markedMessage = $derived(markedLine === 0 ? '' : failure?.line ? failure.message : tidyCaddyError(check.error))
+  // The lines that differ from the file, counting a replaced line once.
+  const changedLines = $derived.by(() => {
+    if (!dirty) return 0
+    let added = 0
+    let removed = 0
+    for (const entry of diffLines(saved.content, draft)) {
+      if (entry.type === 'add') added++
+      else if (entry.type === 'del') removed++
+    }
+    return Math.max(added, removed)
+  })
   const changes = $derived(showChanges ? withContext(diffLines(saved.content, draft), CONTEXT) : [])
   // The Caddyfile is not versioned in the sites-only mode, so the newest applied revision is the state in force.
-  const currentRevision = $derived(
-    revisions.find((r) => r.status === 'applied' && (sitesOnly || r.sha256 === saved.sha256))?.number,
-  )
+  const loadedRevision = $derived(revisions.find((r) => r.status === 'applied' && (sitesOnly || r.sha256 === saved.sha256)))
+  const currentRevision = $derived(loadedRevision?.number)
 
   const statusText = $derived.by(() => {
     if (!dirty) return notice || 'No changes'
@@ -227,10 +239,18 @@
   }
 </script>
 
-<header class="page">
-  <h1>Caddyfile</h1>
-  <p class="subtitle">{path || 'Edit, check and apply the Caddyfile Caddy runs.'}</p>
-</header>
+<section class="pagehead" aria-label="Caddyfile">
+  <div>
+    <div class="eyebrow">Edited here, checked by Caddy, then loaded</div>
+    <h1>Caddyfile</h1>
+  </div>
+  {#if phase === 'ready' && !sitesOnly}
+    <div class="actions">
+      <button type="button" class="ghost" onclick={discard} disabled={!dirty || busy}>Revert</button>
+      <button type="button" class="primary" onclick={apply} disabled={!canApply} aria-busy={busy}>Apply</button>
+    </div>
+  {/if}
+</section>
 
 {#if phase === 'failed'}
   <p class="error" role="alert">{loadError}</p>
@@ -242,111 +262,148 @@
 {:else if phase === 'loading'}
   <p class="empty">Loading…</p>
 {:else}
+  <section class="state" aria-label="State">
+    <div class="it">
+      <span class="eyebrow">Editor</span>
+      <b>{dirty ? `${changedLines} ${changedLines === 1 ? 'line' : 'lines'} changed` : 'Same as loaded'}</b>
+    </div>
+    {#if !sitesOnly}
+      <div class="it">
+        <span class="eyebrow">Check</span>
+        <b role="status" data-state={dirty ? check.state : 'idle'} title={statusText}>{statusText}</b>
+      </div>
+    {/if}
+    <div class="it">
+      <span class="eyebrow">Loaded in Caddy</span>
+      <b>{#if loadedRevision}Revision {loadedRevision.number}, {when(loadedRevision.time)}{:else}No revision yet{/if}</b>
+    </div>
+    {#if !sitesOnly}
+      <span class="spacer"></span>
+      <span class="hint">Apply is off while the check has an error.</span>
+    {/if}
+  </section>
+
   {#if sitesOnly}
     <p class="note">
       In the sites-only backup mode caddy-view never writes the Caddyfile and keeps no copy of it, so it is shown here to be
-      read. Edit it by hand; the history below is of the sites you add in the Sites tab.
+      read. Edit it by hand; the revisions are of the sites you add in the Sites tab.
     </p>
-  {:else}
-    <div class="toolbar">
-      <button type="button" onclick={format} disabled={busy}>Format</button>
-      <button type="button" onclick={() => (showChanges = !showChanges)}>{showChanges ? 'Hide changes' : 'Show changes'}</button>
-      <button type="button" onclick={discard} disabled={!dirty || busy}>Discard changes</button>
-      <span class="spacer"></span>
-      <span class="status" role="status" data-state={dirty ? check.state : 'idle'}>{statusText}</span>
-      <button type="button" class="primary" onclick={apply} disabled={!canApply} aria-busy={busy}>Apply</button>
-    </div>
   {/if}
 
-  <div class="card editor">
-    <CodeEditor value={draft} label="Caddyfile editor" errorLine={markedLine} baseline={saved.content} readonly={sitesOnly} onchange={edit} />
-  </div>
+  <div class="main">
+    <div class="column">
+      <div class="edwrap">
+        <div class="tools" role="toolbar" aria-label="Editor tools">
+          <span class="file" title={path}>{path || 'Caddyfile'}</span>
+          <span class="spacer"></span>
+          {#if !sitesOnly}
+            <button type="button" class="ghost small" onclick={format} disabled={busy}>Format</button>
+            <button type="button" class="ghost small" onclick={() => (showChanges = !showChanges)}>{showChanges ? 'Hide changes' : 'Show changes'}</button>
+          {/if}
+        </div>
+        <div class="editor">
+          <CodeEditor
+            value={draft}
+            label="Caddyfile editor"
+            errorLine={markedLine}
+            errorMessage={markedMessage}
+            baseline={saved.content}
+            readonly={sitesOnly}
+            onchange={edit}
+          />
+        </div>
+      </div>
 
-  {#if dirty && check.warnings.length > 0}
-    <ul class="warnings">
-      {#each check.warnings as warning}
-        <li>Warning: {warning.message}{warning.line ? ` (line ${warning.line})` : ''}</li>
-      {/each}
-    </ul>
-  {/if}
+      {#if dirty && check.warnings.length > 0}
+        <ul class="warnings">
+          {#each check.warnings as warning}
+            <li>Warning: {warning.message}{warning.line ? ` (line ${warning.line})` : ''}</li>
+          {/each}
+        </ul>
+      {/if}
 
-  {#if failure}
-    <div class="failure" role="alert">
-      <p>{failure.message}</p>
-      {#if failure.code === 'conflict'}
-        <button type="button" onclick={reload}>Reload from disk</button>
+      {#if failure}
+        <div class="failure" role="alert">
+          <p>{failure.message}</p>
+          {#if failure.code === 'conflict'}
+            <button type="button" onclick={reload}>Reload from disk</button>
+          {/if}
+        </div>
+      {/if}
+
+      {#if showChanges}
+        <section class="diff changes" aria-label="Changes">
+          {#if changes.length === 0}
+            <p class="empty">No changes</p>
+          {:else}
+            {@render diffRows(changes)}
+          {/if}
+        </section>
       {/if}
     </div>
-  {/if}
 
-  {#if showChanges}
-    <section class="card diff" aria-label="Changes">
-      {#if changes.length === 0}
-        <p class="empty">No changes</p>
-      {:else}
-        {@render diffRows(changes)}
+    <section class="history" aria-label="Revisions">
+      <div class="head">
+        <h2>Revisions</h2>
+        <span class="detail">{sitesOnly ? 'A copy of the sites before every apply' : 'A copy before every apply'}</span>
+      </div>
+      {#if historyError}
+        <p class="error">{historyError}</p>
+      {/if}
+      {#if historyLoaded && revisions.length === 0 && !historyError}
+        <p class="empty">No revisions yet</p>
+      {/if}
+      {#if revisions.length > 0}
+        <ul class="revisions">
+          {#each revisions as rev (rev.number)}
+            <li>
+              <div class="rev">
+                <div class="k">
+                  <strong>Revision {rev.number}</strong>
+                  {#if rev.number === currentRevision}<span class="badge" data-status="current">loaded</span>{/if}
+                  <div class="detail">{label(rev.trigger)}, {when(rev.time)}</div>
+                </div>
+                <span class="badge" data-status={rev.status}>{label(rev.status)}</span>
+                {#if !sitesOnly}
+                  <button type="button" class="ghost small" aria-label="Compare revision {rev.number} with the file" onclick={() => compare(rev.number)}>
+                    Compare
+                  </button>
+                {/if}
+                {#if rev.status === 'applied' && rev.number !== currentRevision}
+                  <button type="button" class="ghost small" aria-label="Roll back to revision {rev.number}" disabled={busy} onclick={() => (confirming = rev.number)}>
+                    Roll back
+                  </button>
+                {/if}
+              </div>
+              {#if rev.error}<p class="error">{rev.error}</p>{/if}
+              {#if confirming === rev.number}
+                <div class="confirm">
+                  <p>Roll back to revision {rev.number}?</p>
+                  {#if sitesOnly}<p class="note">This restores the managed sites of that revision. The Caddyfile is left as it is.</p>{/if}
+                  {#if dirty}<p class="note">Your unsaved changes will be lost.</p>{/if}
+                  <button type="button" class="primary" disabled={busy} onclick={() => rollBack(rev.number)}>Confirm roll back</button>
+                  <button type="button" onclick={() => (confirming = null)}>Cancel</button>
+                </div>
+              {/if}
+              {#if comparing?.number === rev.number}
+                {@const rows = withContext(diffLines(comparing.content, saved.content), CONTEXT)}
+                <section class="diff" aria-label="Revision {rev.number} against the file">
+                  {#if rows.length === 0}
+                    <p class="empty">This revision is the same as the file</p>
+                  {:else}
+                    {@render diffRows(rows)}
+                  {/if}
+                </section>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        {#if next !== null}
+          <button type="button" class="ghost small" onclick={loadMore}>Load more</button>
+        {/if}
       {/if}
     </section>
-  {/if}
-
-  <section class="history" aria-label="History">
-    <h2>History</h2>
-    {#if historyError}
-      <p class="error">{historyError}</p>
-    {/if}
-    {#if historyLoaded && revisions.length === 0 && !historyError}
-      <p class="empty">No revisions yet</p>
-    {/if}
-    {#if revisions.length > 0}
-      <ul class="card revisions">
-        {#each revisions as rev (rev.number)}
-          <li>
-            <div class="rev">
-              <strong>Revision {rev.number}</strong>
-              <span class="detail">{label(rev.trigger)}</span>
-              <span class="badge" data-status={rev.status}>{label(rev.status)}</span>
-              {#if rev.number === currentRevision}<span class="badge" data-status="current">current</span>{/if}
-              <span class="detail">{when(rev.time)}</span>
-              <span class="spacer"></span>
-              {#if !sitesOnly}
-                <button type="button" aria-label="Compare revision {rev.number} with the file" onclick={() => compare(rev.number)}>
-                  Compare
-                </button>
-              {/if}
-              {#if rev.status === 'applied' && rev.number !== currentRevision}
-                <button type="button" aria-label="Roll back to revision {rev.number}" disabled={busy} onclick={() => (confirming = rev.number)}>
-                  Roll back
-                </button>
-              {/if}
-            </div>
-            {#if rev.error}<p class="error">{rev.error}</p>{/if}
-            {#if confirming === rev.number}
-              <div class="confirm">
-                <p>Roll back to revision {rev.number}?</p>
-                {#if sitesOnly}<p class="note">This restores the managed sites of that revision. The Caddyfile is left as it is.</p>{/if}
-                {#if dirty}<p class="note">Your unsaved changes will be lost.</p>{/if}
-                <button type="button" class="primary" disabled={busy} onclick={() => rollBack(rev.number)}>Confirm roll back</button>
-                <button type="button" onclick={() => (confirming = null)}>Cancel</button>
-              </div>
-            {/if}
-            {#if comparing?.number === rev.number}
-              {@const rows = withContext(diffLines(comparing.content, saved.content), CONTEXT)}
-              <section class="diff" aria-label="Revision {rev.number} against the file">
-                {#if rows.length === 0}
-                  <p class="empty">This revision is the same as the file</p>
-                {:else}
-                  {@render diffRows(rows)}
-                {/if}
-              </section>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-      {#if next !== null}
-        <button type="button" onclick={loadMore}>Load more</button>
-      {/if}
-    {/if}
-  </section>
+  </div>
 {/if}
 
 {#snippet diffRows(rows)}
@@ -362,44 +419,51 @@
 {/snippet}
 
 <style>
-  .page {
-    margin-bottom: 1.25rem;
+  .pagehead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
   }
   h1 {
-    margin: 0;
+    margin: 0.35rem 0 0;
     font: 600 clamp(2.2rem, 4.5vw, 3rem) / 1.05 var(--display);
     letter-spacing: -0.03em;
   }
   h2 {
-    margin: 2rem 0 0.75rem;
-    font-size: 1.05rem;
-    font-weight: 500;
+    margin: 0;
+    font: 600 1.3rem / 1.2 var(--display);
+    letter-spacing: -0.02em;
   }
-  .subtitle {
-    margin: 0.25rem 0 0;
+  .eyebrow {
     color: var(--muted);
-    font-family: var(--mono);
-    font-size: 0.85rem;
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
-  .toolbar {
+  .actions {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
+    gap: 0.75rem;
   }
-  .spacer {
-    flex: 1;
+  .ghost {
+    border-color: transparent;
+    border-bottom: 2px solid var(--accent);
+    border-radius: 0;
+    padding: 0.2rem 0.1rem;
+    background: transparent;
   }
-  .status {
-    color: var(--muted);
-    font-size: 0.9rem;
+  .ghost:hover {
+    border-color: transparent;
+    border-bottom-color: var(--accent);
+    color: var(--accent);
   }
-  .status[data-state='valid'] {
-    color: var(--ok);
+  .ghost:disabled {
+    border-bottom-color: var(--line2);
   }
-  .status[data-state='invalid'] {
-    color: var(--bad);
+  .small {
+    font-size: 0.85rem;
   }
   .primary {
     border-color: var(--accent);
@@ -411,10 +475,85 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
-  .card {
+
+  /* the state: its own strip, apart from the editor and the revisions */
+  .state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 2rem;
+    padding: 1rem 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1.75rem;
+  }
+  .it {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .it b {
+    font-weight: 600;
+  }
+  /* What Caddy says can be a whole page of text: the strip keeps it to a line, and the title has the rest. */
+  .it b[role='status'] {
+    max-width: 38rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .it b[data-state='valid'] {
+    color: var(--ok);
+  }
+  .it b[data-state='invalid'] {
+    color: var(--bad);
+  }
+  .spacer {
+    flex: 1;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .main {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2.5rem;
+    align-items: flex-start;
+  }
+  .column {
+    flex: 2 1 38rem;
+    min-width: 0;
+  }
+  .edwrap {
+    overflow: hidden;
+    border: 1px solid var(--line2);
     border-radius: var(--radius-lg);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.9rem;
+    border-bottom: 1px solid var(--border);
     background: var(--surface);
-    box-shadow: var(--shadow);
+  }
+  .file {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0.2rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg);
+    font: 500 0.8rem / 1.4 var(--mono);
   }
   .editor {
     height: clamp(18rem, 55vh, 38rem);
@@ -428,10 +567,8 @@
   .failure {
     margin-top: 0.75rem;
     padding: 0.75rem 1rem;
-    border-radius: var(--radius);
-    border-left: 4px solid var(--bad);
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    border-left: 3px solid var(--bad);
+    background: var(--bad-soft);
   }
   .failure p {
     margin: 0 0 0.25rem;
@@ -448,17 +585,87 @@
   .note {
     color: var(--warn);
   }
+  .detail {
+    font-size: 0.85rem;
+  }
+
+  .history {
+    flex: 1 1 20rem;
+    min-width: 0;
+  }
+  .head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .revisions {
+    margin: 0 0 0.75rem;
+    padding: 0;
+    list-style: none;
+  }
+  .revisions li {
+    padding: 0.8rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .revisions li:last-child {
+    border-bottom: 0;
+  }
+  .rev {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem 0.75rem;
+  }
+  .rev .k {
+    flex: 1 1 8rem;
+    min-width: 0;
+  }
+  .badge {
+    padding: 0.05rem 0.55rem;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font: 500 0.7rem / 1.5 var(--mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .badge[data-status='applied'] {
+    color: var(--ok);
+  }
+  .badge[data-status='failed'],
+  .badge[data-status='recovery-required'] {
+    color: var(--bad);
+  }
+  .badge[data-status='current'] {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  .confirm {
+    margin-top: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: var(--radius);
+    background: var(--surface-2);
+  }
+  .confirm p {
+    margin: 0 0 0.5rem;
+  }
+
   .diff {
     margin-top: 0.75rem;
     padding: 0.5rem 0;
     overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
   }
   .revisions .diff {
     margin: 0.5rem 0 0;
     padding: 0.25rem 0;
     background: var(--surface-2);
-    border-radius: var(--radius);
-    box-shadow: none;
+    border: 0;
   }
   .rows {
     font-family: var(--mono);
@@ -471,10 +678,10 @@
     white-space: pre;
   }
   .row[data-diff='add'] {
-    background: color-mix(in srgb, var(--ok) 16%, transparent);
+    background: var(--ok-soft);
   }
   .row[data-diff='del'] {
-    background: color-mix(in srgb, var(--bad) 16%, transparent);
+    background: var(--bad-soft);
   }
   .row[data-diff='skip'] {
     color: var(--muted);
@@ -482,50 +689,5 @@
   .sign {
     flex: none;
     color: var(--muted);
-  }
-  .revisions {
-    margin: 0 0 0.75rem;
-    padding: 0.25rem 1rem;
-    list-style: none;
-  }
-  .revisions li {
-    padding: 0.65rem 0;
-    border-bottom: 1px solid var(--border);
-  }
-  .revisions li:last-child {
-    border-bottom: 0;
-  }
-  .rev {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.35rem 0.75rem;
-  }
-  .badge {
-    padding: 0.05rem 0.55rem;
-    border-radius: 999px;
-    background: var(--surface-2);
-    color: var(--muted);
-    font-size: 0.75rem;
-  }
-  .badge[data-status='applied'] {
-    color: var(--ok);
-  }
-  .badge[data-status='failed'],
-  .badge[data-status='recovery-required'] {
-    color: var(--bad);
-  }
-  .badge[data-status='current'] {
-    background: var(--accent);
-    color: var(--accent-text);
-  }
-  .confirm {
-    margin-top: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: var(--radius);
-    background: var(--surface-2);
-  }
-  .confirm p {
-    margin: 0 0 0.5rem;
   }
 </style>

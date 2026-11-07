@@ -14,6 +14,12 @@ const password = () => screen.getByLabelText('Password')
 const submit = () => screen.getByRole('button', { name: 'Sign in' })
 
 describe('LoginView', () => {
+  it('has a title, and says how to get a password back', () => {
+    render(LoginView, { login: vi.fn(), onlogin: vi.fn() })
+    expect(screen.getByRole('heading', { level: 1, name: 'Sign in' })).toBeTruthy()
+    expect(screen.getByText(/caddy-view reset-password/)).toBeTruthy()
+  })
+
   it('asks for a username, starting with admin, and a password that is hidden', () => {
     setup(vi.fn())
     expect(username().value).toBe('admin')

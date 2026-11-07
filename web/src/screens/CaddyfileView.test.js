@@ -81,6 +81,53 @@ describe('CaddyfileView when it cannot edit', () => {
   })
 })
 
+describe('CaddyfileView state', () => {
+  const stateText = () => within(screen.getByRole('region', { name: 'State' })).getByText
+
+  it('keeps the state in a strip of its own, apart from the editor and the revisions', async () => {
+    const { container } = await open()
+    const strip = screen.getByRole('region', { name: 'State' })
+    expect(strip.contains(container.querySelector('.cm-editor'))).toBe(false)
+    expect(strip.contains(screen.getByRole('region', { name: 'Revisions' }))).toBe(false)
+  })
+
+  it('says how many lines changed', async () => {
+    const { container } = await open()
+    const strip = within(screen.getByRole('region', { name: 'State' }))
+    expect(strip.getByText('Same as loaded')).toBeTruthy()
+    type(container, FILE + 'one\ntwo\n')
+    await waitFor(() => expect(strip.getByText('2 lines changed')).toBeTruthy())
+    type(container, FILE + 'one\n')
+    await waitFor(() => expect(strip.getByText('1 line changed')).toBeTruthy())
+  })
+
+  it('says which revision Caddy runs', async () => {
+    await open({ 'GET /api/revisions?limit=20': () => json({ revisions: [revision(7, { sha256: SHA })], next: null }) })
+    const strip = within(screen.getByRole('region', { name: 'State' }))
+    expect(await strip.findByText(/Revision 7/)).toBeTruthy()
+  })
+
+  it('puts Apply and Revert with the title, and Format and Show changes with the editor', async () => {
+    await open()
+    const header = screen.getByRole('region', { name: 'Caddyfile' })
+    expect(within(header).getByRole('button', { name: 'Apply' })).toBeTruthy()
+    expect(within(header).getByRole('button', { name: 'Revert' })).toBeTruthy()
+    const tools = screen.getByRole('toolbar', { name: 'Editor tools' })
+    expect(within(tools).getByRole('button', { name: 'Format' })).toBeTruthy()
+    expect(within(tools).getByRole('button', { name: 'Show changes' })).toBeTruthy()
+  })
+
+  it('writes the error under its line, in the editor', async () => {
+    const { container } = await open({
+      'POST /api/caddyfile/validate': () => json({ valid: false, error: 'unrecognized directive: nope', line: 2 }),
+    })
+    type(container, 'example.com {\n\tnope\n}\n')
+    await waitFor(() => expect(container.querySelector('.cm-error-message')).toBeTruthy())
+    expect(container.querySelector('.cm-error-message').textContent).toBe('unrecognized directive: nope')
+    expect(stateText()).toBeTypeOf('function')
+  })
+})
+
 describe('CaddyfileView editing', () => {
   it('opens with the Caddyfile in the editor, nothing to apply', async () => {
     const { container } = await open()
@@ -88,7 +135,7 @@ describe('CaddyfileView editing', () => {
     expect(textOf(container)).toBe(FILE)
     expect(status()).toMatch(/no changes/i)
     expect(button('Apply').disabled).toBe(true)
-    expect(button('Discard changes').disabled).toBe(true)
+    expect(button('Revert').disabled).toBe(true)
   })
 
   it('checks an edit with Caddy and says it is valid', async () => {
@@ -166,7 +213,7 @@ describe('CaddyfileView editing', () => {
   it('discards the changes', async () => {
     const { container } = await open()
     type(container, 'changed')
-    await fireEvent.click(button('Discard changes'))
+    await fireEvent.click(button('Revert'))
     expect(textOf(container)).toBe(FILE)
     expect(status()).toMatch(/no changes/i)
   })
@@ -320,7 +367,7 @@ describe('CaddyfileView history', () => {
 
   it('lists the revisions, newest first, with how they came about and how they ended', async () => {
     await open(withHistory())
-    const history = await screen.findByRole('region', { name: 'History' })
+    const history = await screen.findByRole('region', { name: 'Revisions' })
     const items = within(history).getAllByRole('listitem')
     expect(items).toHaveLength(3)
     expect(items[0].textContent).toContain('Revision 7')
@@ -337,16 +384,16 @@ describe('CaddyfileView history', () => {
 
   it('marks the revision that is the file now, which cannot be rolled back to', async () => {
     await open(withHistory())
-    const history = await screen.findByRole('region', { name: 'History' })
+    const history = await screen.findByRole('region', { name: 'Revisions' })
     const items = within(history).getAllByRole('listitem')
-    expect(items[1].textContent).toMatch(/current/i)
+    expect(items[1].textContent).toMatch(/loaded/i)
     expect(within(items[1]).queryByRole('button', { name: /roll back/i })).toBeNull()
     expect(within(items[0]).getByRole('button', { name: 'Roll back to revision 7' })).toBeTruthy()
   })
 
   it('offers no roll back to a revision that failed', async () => {
     await open(withHistory())
-    const history = await screen.findByRole('region', { name: 'History' })
+    const history = await screen.findByRole('region', { name: 'Revisions' })
     expect(within(history).queryByRole('button', { name: 'Roll back to revision 5' })).toBeNull()
   })
 

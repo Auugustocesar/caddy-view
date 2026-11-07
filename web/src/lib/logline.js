@@ -7,6 +7,8 @@
  * @property {string|null} host
  * @property {string|null} uri
  * @property {number|null} duration seconds
+ * @property {number|null} size response bytes
+ * @property {string|null} client the address of the visitor
  */
 
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -20,7 +22,7 @@ const number = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
  */
 export function parseLogLine(raw) {
   /** @type {LogLine} */
-  const line = { raw, time: null, status: null, method: null, host: null, uri: null, duration: null }
+  const line = { raw, time: null, status: null, method: null, host: null, uri: null, duration: null, size: null, client: null }
   let entry
   try {
     entry = JSON.parse(raw)
@@ -33,10 +35,12 @@ export function parseLogLine(raw) {
   line.time = ts === null ? null : new Date(ts * 1000)
   line.status = number(entry.status)
   line.duration = number(entry.duration)
+  line.size = number(entry.size)
   if (isObject(entry.request)) {
     line.method = text(entry.request.method)
     line.host = text(entry.request.host)
     line.uri = text(entry.request.uri)
+    line.client = text(entry.request.remote_ip)
   }
   return line
 }

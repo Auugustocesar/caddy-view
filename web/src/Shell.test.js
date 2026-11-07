@@ -90,6 +90,14 @@ afterEach(() => {
   window.localStorage.clear()
 })
 
+describe('Logs page', () => {
+  it('has its title, and the choice between the live tail and the history', async () => {
+    openAt('/logs')
+    expect(screen.getByRole('heading', { level: 1, name: 'Logs' })).toBeTruthy()
+    expect(screen.getByRole('radiogroup', { name: 'Logs view' })).toBeTruthy()
+  })
+})
+
 describe('App navigation', () => {
   it('has exactly the six tabs, as links', () => {
     openAt('/')

@@ -70,6 +70,37 @@ describe('CodeEditor', () => {
     expect(container.querySelector('.cm-error-marker')).toBeNull()
   })
 
+  describe('error message', () => {
+    const base = { value: 'a {\n\tnope\n}', label: 'Caddyfile', errorLine: 2 }
+
+    it('writes the message of an error right under its line', () => {
+      const { container } = render(CodeEditor, { ...base, errorMessage: 'unknown directive "nope"' })
+      const message = container.querySelector('.cm-error-message')
+      expect(message.textContent).toBe('unknown directive "nope"')
+      expect(message.previousElementSibling.classList.contains('cm-error-line')).toBe(true)
+    })
+
+    it('is not part of the text', () => {
+      const { container } = render(CodeEditor, { ...base, errorMessage: 'unknown directive' })
+      expect(viewOf(container).state.doc.toString()).toBe(base.value)
+    })
+
+    it('has none without a message, or without an error line', () => {
+      const without = render(CodeEditor, base)
+      expect(without.container.querySelector('.cm-error-message')).toBeNull()
+      const noLine = render(CodeEditor, { ...base, errorLine: 0, errorMessage: 'orphan' })
+      expect(noLine.container.querySelector('.cm-error-message')).toBeNull()
+    })
+
+    it('follows the message and goes with the error', async () => {
+      const { container, rerender } = render(CodeEditor, { ...base, errorMessage: 'first' })
+      await rerender({ ...base, errorMessage: 'second' })
+      expect(container.querySelector('.cm-error-message').textContent).toBe('second')
+      await rerender({ ...base, errorLine: 0, errorMessage: '' })
+      expect(container.querySelector('.cm-error-message')).toBeNull()
+    })
+  })
+
   it('ignores an error line the text does not have', () => {
     const { container } = render(CodeEditor, { value: 'a\nb', label: 'Caddyfile', errorLine: 9 })
     expect(container.querySelector('.cm-error-line')).toBeNull()

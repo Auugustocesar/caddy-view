@@ -12,7 +12,7 @@ const caddyLine = JSON.stringify({
   status: 200,
 })
 
-const rawOnly = (raw) => ({ raw, time: null, status: null, method: null, host: null, uri: null, duration: null })
+const rawOnly = (raw) => ({ raw, time: null, status: null, method: null, host: null, uri: null, duration: null, size: null, client: null })
 
 describe('parseLogLine', () => {
   it('reads the fields of a Caddy access log line', () => {
@@ -25,6 +25,8 @@ describe('parseLogLine', () => {
       host: 'app.example.com',
       uri: '/items?id=1',
       duration: 0.0123,
+      size: 512,
+      client: '10.0.0.7',
     })
   })
 

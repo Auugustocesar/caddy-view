@@ -4,7 +4,8 @@
   import Segmented from '../components/Segmented.svelte'
   import StatusBar from '../components/StatusBar.svelte'
   import Tile from '../components/Tile.svelte'
-  import { getHosts, getTraffic } from '../lib/api.js'
+  import { getAttention, getHosts, getTraffic } from '../lib/api.js'
+  import { describeItems } from '../lib/attention.js'
   import { formatBytes, formatCount, formatMs, formatPercent } from '../lib/format.js'
   import { PERIODS, chartTitle, periodById, periodRange, summarize } from '../lib/metrics.js'
 
@@ -24,7 +25,38 @@
   /** @type {Array<any> | null} null when the hosts could not be read */
   let hosts = $state(null)
 
+  /** @type {Array<any> | null} null when it cannot be read, or the period is not one the server answers */
+  let attention = $state(null)
+  // The periods /api/attention answers; a month is longer than it looks back.
+  const ATTENTION_WINDOWS = new Set(['1h', '24h', '7d'])
+  let attentionSeq = 0
+
+  async function loadAttention() {
+    const id = ++attentionSeq
+    if (!ATTENTION_WINDOWS.has(periodId)) {
+      attention = null
+      return
+    }
+    try {
+      const answer = await getAttention(periodId)
+      if (id === attentionSeq) attention = answer.items
+    } catch {
+      // It is a help, not the page: without it the figures still show.
+      if (id === attentionSeq) attention = null
+    }
+  }
+
   const period = $derived(periodById(periodId))
+  const items = $derived(attention ? describeItems(attention) : null)
+  // The hosts the items name, for the table. A host with errors shows as that, whatever else is said of it.
+  const flags = $derived.by(() => {
+    const out = {}
+    for (const item of attention ?? []) {
+      if (item.kind === 'errors_up') out[item.host] = 'errors'
+      else if (item.kind === 'host_slow' && !out[item.host]) out[item.host] = 'slow'
+    }
+    return out
+  })
   const sum = $derived(summarize(traffic?.buckets))
   // The host that is chosen stays in the list even when this period has no traffic from it.
   const hostNames = $derived.by(() => {
@@ -70,6 +102,7 @@
     const range = periodRange(period, now())
     loadTraffic(range)
     loadHosts(range)
+    loadAttention()
   }
 
   loadAll()
@@ -85,16 +118,20 @@
   }
 </script>
 
-<header class="page">
-  <h1>Metrics</h1>
-  <p class="subtitle">Requests, status codes and response times from Caddy's access log.</p>
+<header class="pagehead">
+  <div>
+    <div class="eyebrow">Requests, status codes and response times from Caddy's access log</div>
+    <h1>Metrics</h1>
+  </div>
+  {#if phase !== 'off'}
+    <Segmented label="Period" options={periodOptions} value={periodId} onchange={changePeriod} />
+  {/if}
 </header>
 
 {#if phase === 'off'}
   <p class="note">Traffic history is off, so there is nothing to show here. Start caddy-view with its history on to see traffic.</p>
 {:else}
   <div class="controls">
-    <Segmented label="Period" options={periodOptions} value={periodId} onchange={changePeriod} />
     <label class="host-filter">
       <span>Host</span>
       <select value={host} onchange={(event) => changeHost(event.currentTarget.value)}>
@@ -124,8 +161,27 @@
       <Tile label="Avg. response time" value={formatMs(sum.avgMs)} detail={sum.maxMs === null ? '' : `max ${formatMs(sum.maxMs)}`} />
     </div>
 
-    <div class="card">
-      <BarChart title={chartTitle(traffic?.resolution ?? period.resolution)} buckets={traffic?.buckets ?? []} labels={period.hours > 24 ? 'date' : 'time'} />
+    <div class="main">
+      <div class="card chart">
+        <BarChart title={chartTitle(traffic?.resolution ?? period.resolution)} buckets={traffic?.buckets ?? []} labels={period.hours > 24 ? 'date' : 'time'} />
+      </div>
+
+      {#if items}
+        <section class="attention" aria-label="Needs attention">
+          <h2>Needs attention</h2>
+          {#each items as item (item.key)}
+            <div class="item" data-severity={item.severity}>
+              <span class="mark" aria-hidden="true"></span>
+              <div>
+                <div class="t">{item.title}</div>
+                <p>{item.text}</p>
+              </div>
+            </div>
+          {:else}
+            <p class="empty">Nothing needs attention.</p>
+          {/each}
+        </section>
+      {/if}
     </div>
 
     <section class="card" aria-labelledby="status-heading">
@@ -138,36 +194,43 @@
       {#if hosts === null}
         <p class="empty">The hosts could not be read.</p>
       {:else}
-        <HostsTable {hosts} selected={host} onselect={changeHost} />
+        <HostsTable {hosts} selected={host} {flags} onselect={changeHost} />
       {/if}
     </section>
   {/if}
 {/if}
 
 <style>
-  .page {
-    margin-bottom: 1.25rem;
+  .pagehead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .eyebrow {
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   h1 {
-    margin: 0;
+    margin: 0.35rem 0 0;
     font: 600 clamp(2.2rem, 4.5vw, 3rem) / 1.05 var(--display);
     letter-spacing: -0.03em;
   }
   h2 {
     margin: 0 0 0.75rem;
-    font-size: 1rem;
-    font-weight: 500;
-  }
-  .subtitle {
-    margin: 0.25rem 0 0;
-    color: var(--muted);
+    font: 600 1.3rem / 1.2 var(--display);
+    letter-spacing: -0.02em;
   }
   .controls {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 1rem;
+    margin-bottom: 1.5rem;
   }
   .host-filter {
     display: flex;
@@ -178,7 +241,7 @@
   }
   .host-filter select {
     padding: 0.35rem 0.7rem;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line2);
     border-radius: var(--radius);
     background: var(--surface);
     color: var(--text);
@@ -186,21 +249,83 @@
   }
   .tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
-    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 1.5rem 2rem;
+    margin-bottom: 2rem;
+  }
+  .main {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2.5rem;
+    align-items: flex-start;
+  }
+  .chart {
+    flex: 2 1 28rem;
+    min-width: 0;
+    margin-top: 0;
   }
   .card {
-    margin-top: 0.75rem;
-    padding: 1.1rem 1.25rem;
+    margin-top: 2rem;
+    padding: 1.25rem 1.5rem;
+    border: 1px solid var(--line2);
     border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    background: linear-gradient(155deg, var(--accent-soft), transparent 52%), var(--surface);
   }
   .card.flush {
     padding-bottom: 0.5rem;
+    background: transparent;
+    border-color: var(--border);
   }
   .card.flush h2 {
     margin-bottom: 0.25rem;
+  }
+  .attention {
+    flex: 1 1 20rem;
+    min-width: 0;
+  }
+  .attention h2 {
+    margin: 0;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line2);
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .item {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .item:last-child {
+    border-bottom: 0;
+  }
+  .mark {
+    flex: none;
+    width: 0.6rem;
+    height: 0.6rem;
+    margin-top: 0.45rem;
+    border-radius: 50%;
+    background: var(--faint);
+  }
+  [data-severity='bad'] > .mark {
+    background: var(--bad);
+  }
+  [data-severity='warn'] > .mark {
+    background: var(--warn);
+  }
+  [data-severity='info'] > .mark {
+    background: var(--info);
+  }
+  .item .t {
+    font: 600 1.05rem / 1.3 var(--display);
+    letter-spacing: -0.01em;
+  }
+  .item p {
+    margin: 0.3rem 0 0;
+    color: var(--muted);
+    font-size: 0.9rem;
   }
   .empty {
     color: var(--muted);

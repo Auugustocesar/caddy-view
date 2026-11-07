@@ -258,15 +258,11 @@
     /* A track as wide as its widest child would let a long line of the generated text widen the whole page. */
     grid-template-columns: minmax(0, 1fr);
     gap: 1rem;
-    padding: 1.25rem 1.5rem;
-    border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow);
   }
   h2 {
     margin: 0;
-    font-size: 1.15rem;
-    font-weight: 500;
+    font: 600 1.4rem / 1.2 var(--display);
+    letter-spacing: -0.02em;
   }
   .field {
     display: grid;
@@ -278,16 +274,20 @@
   }
   label,
   legend {
-    font-size: 0.85rem;
-    font-weight: 600;
     padding: 0;
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   .choice {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-weight: 400;
-    font-size: 0.95rem;
+    color: var(--text);
+    font: 400 0.95rem / 1.5 var(--sans);
+    letter-spacing: normal;
+    text-transform: none;
   }
   .kind {
     display: flex;
@@ -306,7 +306,7 @@
     padding: 0.45rem 0.7rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: var(--bg);
+    background: var(--surface);
     color: var(--text);
   }
   textarea {
@@ -355,8 +355,8 @@
   .failure {
     padding: 0.6rem 0.9rem;
     border-radius: var(--radius);
-    border-left: 4px solid var(--bad);
-    background: var(--surface-2);
+    border-left: 3px solid var(--bad);
+    background: var(--bad-soft);
   }
   .failure p {
     margin: 0;

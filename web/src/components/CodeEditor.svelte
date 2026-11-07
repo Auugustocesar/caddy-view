@@ -3,7 +3,7 @@
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
   import { HighlightStyle, StreamLanguage, bracketMatching, foldGutter, foldKeymap, foldService, indentOnInput, indentUnit, syntaxHighlighting } from '@codemirror/language'
   import { Annotation, EditorState, RangeSet, StateEffect, StateField } from '@codemirror/state'
-  import { Decoration, EditorView, GutterMarker, drawSelection, gutter, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
+  import { Decoration, EditorView, GutterMarker, WidgetType, drawSelection, gutter, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from '@codemirror/view'
   import { tags } from '@lezer/highlight'
   import { untrack } from 'svelte'
   import { caddyfileTokenizer } from '../lib/caddyfile-language.js'
@@ -11,8 +11,8 @@
   import { diffLines } from '../lib/diff.js'
   import { cspNonce } from '../lib/nonce.js'
 
-  /** @type {{value: string, label: string, errorLine?: number, baseline?: string, readonly?: boolean, onchange?: (text: string) => void}} */
-  let { value, label, errorLine = 0, baseline = undefined, readonly = false, onchange = () => {} } = $props()
+  /** @type {{value: string, label: string, errorLine?: number, errorMessage?: string, baseline?: string, readonly?: boolean, onchange?: (text: string) => void}} */
+  let { value, label, errorLine = 0, errorMessage = '', baseline = undefined, readonly = false, onchange = () => {} } = $props()
 
   // Changes the page makes (a new value, a formatted text) are not edits and are not reported.
   const fromOutside = Annotation.define()
@@ -25,6 +25,35 @@
       EditorView.decorations.from(field, (line) => ({ state }) =>
         line >= 1 && line <= state.doc.lines ? Decoration.set([Decoration.line({ class: 'cm-error-line' }).range(state.doc.line(line).from)]) : Decoration.none,
       ),
+  })
+
+  // What is wrong, written on its own row right under the line, as part of the page and not of the text.
+  class ErrorMessage extends WidgetType {
+    /** @param {string} text */
+    constructor(text) {
+      super()
+      this.text = text
+    }
+    eq(other) {
+      return other.text === this.text
+    }
+    toDOM() {
+      const el = document.createElement('div')
+      el.className = 'cm-error-message'
+      el.textContent = this.text
+      return el
+    }
+  }
+  const setErrorMessage = StateEffect.define()
+  const errorMessageField = StateField.define({
+    create: () => '',
+    update: (text, tr) => tr.effects.reduce((current, effect) => (effect.is(setErrorMessage) ? effect.value : current), text),
+  })
+  const errorMessageDecoration = EditorView.decorations.compute([errorLineField, errorMessageField], (state) => {
+    const line = state.field(errorLineField)
+    const text = state.field(errorMessageField)
+    if (!text || line < 1 || line > state.doc.lines) return Decoration.none
+    return Decoration.set([Decoration.widget({ widget: new ErrorMessage(text), block: true, side: 1 }).range(state.doc.line(line).to)])
   })
 
   class ErrorMarker extends GutterMarker {
@@ -115,12 +144,12 @@
   ])
 
   const theme = EditorView.theme({
-    '&': { color: 'var(--text)', backgroundColor: 'var(--surface)', fontSize: '0.9rem', height: '100%' },
+    '&': { color: 'var(--text)', backgroundColor: 'transparent', fontSize: '0.9rem', height: '100%' },
     '&.cm-focused': { outline: '2px solid var(--accent)', outlineOffset: '-1px' },
     '.cm-scroller': { fontFamily: 'var(--mono)', lineHeight: '1.6', overflow: 'auto' },
     '.cm-content': { caretColor: 'var(--accent)', padding: '0.5rem 0' },
     '.cm-cursor': { borderLeftColor: 'var(--accent)' },
-    '.cm-gutters': { backgroundColor: 'var(--surface-2)', color: 'var(--muted)', border: 'none' },
+    '.cm-gutters': { backgroundColor: 'transparent', color: 'var(--faint)', border: 'none' },
     '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 6%, transparent)' },
     '.cm-activeLineGutter': { backgroundColor: 'color-mix(in srgb, var(--accent) 10%, transparent)', color: 'var(--text)' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
@@ -128,12 +157,13 @@
     },
     '.cm-matchingBracket': { backgroundColor: 'color-mix(in srgb, var(--accent) 22%, transparent)', outline: '1px solid var(--accent)', color: 'inherit' },
     '.cm-nonmatchingBracket': { backgroundColor: 'color-mix(in srgb, var(--bad) 25%, transparent)', color: 'inherit' },
-    '.cm-error-line': { backgroundColor: 'color-mix(in srgb, var(--bad) 14%, transparent)', boxShadow: 'inset 3px 0 0 var(--bad)' },
+    '.cm-error-line': { backgroundColor: 'var(--bad-soft)' },
+    '.cm-error-message': { padding: '0.15rem 0.5rem 0.4rem 1rem', backgroundColor: 'var(--bad-soft)', color: 'var(--bad)', fontFamily: 'var(--sans)', fontSize: '0.85rem', fontWeight: '500' },
     '.cm-error-gutter': { minWidth: '1.1rem' },
     '.cm-change-gutter': { minWidth: '0.4rem' },
     '.cm-change-marker': { display: 'block', height: '100%', width: '3px', marginLeft: '2px' },
-    '.cm-change-marker[data-kind="added"]': { backgroundColor: 'var(--ok)' },
-    '.cm-change-marker[data-kind="removed"]': { backgroundColor: 'var(--bad)', height: '3px', marginTop: '-1px' },
+    '.cm-change-marker[data-kind="added"]': { backgroundColor: 'var(--accent)' },
+    '.cm-change-marker[data-kind="removed"]': { backgroundColor: 'var(--accent)', height: '3px', marginTop: '-1px' },
     '.cm-foldGutter span': { cursor: 'pointer', color: 'var(--muted)', padding: '0 0.2rem' },
     '.cm-foldPlaceholder': { backgroundColor: 'var(--surface-2)', color: 'var(--muted)', border: '1px solid var(--border, var(--muted))', padding: '0 0.3rem' },
     '.cm-error-marker': { color: 'var(--bad)', fontWeight: '700' },
@@ -167,6 +197,8 @@
         StreamLanguage.define(caddyfileTokenizer),
         syntaxHighlighting(highlighting),
         errorLineField,
+        errorMessageField,
+        errorMessageDecoration,
         theme,
         // Fixed when the editor is made: a page shows the file either to edit or to read.
         EditorState.readOnly.of(untrack(() => readonly)),
@@ -180,7 +212,7 @@
       ],
     })
     view = new EditorView({ state, parent: host })
-    view.dispatch({ effects: [setErrorLine.of(untrack(() => errorLine)), setBaseline.of(untrack(() => baseline))] })
+    view.dispatch({ effects: [setErrorLine.of(untrack(() => errorLine)), setErrorMessage.of(untrack(() => errorMessage)), setBaseline.of(untrack(() => baseline))] })
     return () => {
       view?.destroy()
       view = null
@@ -202,6 +234,11 @@
   $effect(() => {
     const base = baseline
     if (view && view.state.field(baselineField) !== base) view.dispatch({ effects: setBaseline.of(base) })
+  })
+
+  $effect(() => {
+    const text = errorMessage
+    if (view && view.state.field(errorMessageField) !== text) view.dispatch({ effects: setErrorMessage.of(text) })
   })
 
   $effect(() => {

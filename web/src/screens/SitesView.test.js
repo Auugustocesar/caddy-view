@@ -72,6 +72,26 @@ function api(routes = {}) {
   }
 }
 
+describe('SitesView file strip', () => {
+  it('says where the sites are written, whether Caddy imports it, and how many there are', async () => {
+    await open()
+    const strip = screen.getByRole('region', { name: 'Managed file' })
+    expect(within(strip).getByText(MANAGED_FILE)).toBeTruthy()
+    expect(within(strip).getByText('Imported')).toBeTruthy()
+    expect(within(strip).getByText('2 sites, 1 enabled')).toBeTruthy()
+  })
+
+  it('says when the Caddyfile does not import it', async () => {
+    await open({ 'GET /api/managed-sites': () => json(listing({ imported: false })) })
+    expect(within(screen.getByRole('region', { name: 'Managed file' })).getByText('Not imported')).toBeTruthy()
+  })
+
+  it('uses the singular for one site', async () => {
+    await open({ 'GET /api/managed-sites': () => json(listing({ sites: [siteA] })) })
+    expect(within(screen.getByRole('region', { name: 'Managed file' })).getByText('1 site, 1 enabled')).toBeTruthy()
+  })
+})
+
 const open = async (routes) => {
   const server = api(routes)
   const view = render(SitesView, { previewDelay: 0 })

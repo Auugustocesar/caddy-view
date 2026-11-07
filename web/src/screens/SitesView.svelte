@@ -26,6 +26,8 @@
 
   const enabledHosts = $derived(new Set(data.sites.filter((s) => s.enabled).map((s) => s.hostname.toLowerCase())))
   const isManaged = (host) => enabledHosts.has(host.toLowerCase())
+  const enabledCount = $derived(data.sites.filter((s) => s.enabled).length)
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
   async function refresh() {
     try {
@@ -101,9 +103,14 @@
   }
 </script>
 
-<header class="page">
-  <h1>Sites</h1>
-  <p class="subtitle">The sites caddy-view manages, and what Caddy runs.</p>
+<header class="pagehead">
+  <div>
+    <div class="eyebrow">Reverse proxies and redirects that caddy-view keeps for you</div>
+    <h1>Sites</h1>
+  </div>
+  {#if phase === 'ready' && !wizard}
+    <button type="button" class="primary" onclick={() => openWizard(null)} disabled={!data.imported || busy}>Add site</button>
+  {/if}
 </header>
 
 {#if phase === 'failed'}
@@ -132,6 +139,13 @@
       </section>
     {/if}
 
+    <section class="file" aria-label="Managed file">
+      <span class="tag" data-state={data.imported ? 'ok' : 'warn'}>{data.imported ? 'Imported' : 'Not imported'}</span>
+      <span class="muted">Managed file</span>
+      <span class="path">{data.managedFile}</span>
+      <span class="count muted">{plural(data.sites.length, 'site')}, {enabledCount} enabled</span>
+    </section>
+
     {#if notice}<p class="notice" role="status">{notice}</p>{/if}
     {#if failure}
       <div class="failure" role="alert"><p>{failure}</p></div>
@@ -140,23 +154,10 @@
     <section aria-label="Managed sites">
       <div class="heading">
         <h2>Managed sites</h2>
-        {#if !wizard}
-          <button type="button" class="primary" onclick={() => openWizard(null)} disabled={!data.imported || busy}>Add site</button>
-        {/if}
       </div>
 
-      {#if wizard}
-        {#key wizard.site?.id ?? 'new'}
-          <SiteWizard
-            site={wizard.site}
-            accessLog={data.accessLog}
-            {previewDelay}
-            onsaved={(result) => saved(result, wizard?.site)}
-            oncancel={() => (wizard = null)}
-          />
-        {/key}
-      {/if}
-
+      <div class="layout">
+      <div class="list">
       {#if data.sites.length === 0}
         <p class="empty">No managed sites yet</p>
       {:else}
@@ -198,6 +199,22 @@
           </table>
         </div>
       {/if}
+      </div>
+
+      {#if wizard}
+        <div class="formpanel">
+          {#key wizard.site?.id ?? 'new'}
+            <SiteWizard
+              site={wizard.site}
+              accessLog={data.accessLog}
+              {previewDelay}
+              onsaved={(result) => saved(result, wizard?.site)}
+              oncancel={() => (wizard = null)}
+            />
+          {/key}
+        </div>
+      {/if}
+      </div>
     </section>
   {/if}
 
@@ -234,18 +251,83 @@
 {/if}
 
 <style>
-  .page {
-    margin-bottom: 1.25rem;
+  .pagehead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .eyebrow {
+    color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .file {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-top: 0;
+    padding: 0.8rem 0;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .file .path {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font: 400 0.85rem / 1.4 var(--mono);
+  }
+  .file .count {
+    margin-left: auto;
+    font-size: 0.85rem;
+  }
+  .tag {
+    padding: 0.05rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .tag[data-state='ok'] {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  .tag[data-state='warn'] {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+  .muted {
+    color: var(--muted);
+  }
+  .layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2.5rem;
+    align-items: flex-start;
+  }
+  .list {
+    flex: 2 1 36rem;
+    min-width: 0;
+  }
+  .formpanel {
+    flex: 1 1 24rem;
+    min-width: 0;
+    padding: 1.5rem;
+    border: 1px solid var(--line2);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(155deg, var(--accent-soft), transparent 52%), var(--surface);
   }
   h1 {
-    margin: 0;
+    margin: 0.35rem 0 0;
     font: 600 clamp(2.2rem, 4.5vw, 3rem) / 1.05 var(--display);
     letter-spacing: -0.03em;
   }
   h2 {
     margin: 0;
-    font-size: 1.05rem;
-    font-weight: 500;
+    font: 600 1.3rem / 1.2 var(--display);
+    letter-spacing: -0.02em;
   }
   section {
     margin-top: 2rem;
@@ -263,11 +345,14 @@
   .card {
     border-radius: var(--radius-lg);
     background: var(--surface);
-    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
   }
   .card.flush {
-    padding: 0.25rem 0.5rem;
+    padding: 0;
     overflow-x: auto;
+    border: 0;
+    background: transparent;
+    border-radius: 0;
   }
   .setup {
     margin-top: 0;
@@ -280,16 +365,14 @@
   .notice {
     padding: 0.6rem 0.9rem;
     border-radius: var(--radius);
-    background: var(--surface);
-    box-shadow: var(--shadow);
-    border-left: 4px solid var(--ok);
+    background: var(--ok-soft);
+    border-left: 3px solid var(--ok);
   }
   .failure {
     padding: 0.6rem 0.9rem;
     border-radius: var(--radius);
-    background: var(--surface);
-    box-shadow: var(--shadow);
-    border-left: 4px solid var(--bad);
+    background: var(--bad-soft);
+    border-left: 3px solid var(--bad);
   }
   .failure p {
     margin: 0;
@@ -331,13 +414,13 @@
   }
   th {
     color: var(--muted);
-    font-weight: 600;
-    font-size: 0.75rem;
-    letter-spacing: 0.06em;
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .host {
-    font-weight: 600;
+    font: 600 1.05rem / 1.2 var(--display);
+    letter-spacing: -0.01em;
   }
   .protected {
     color: var(--muted);
@@ -353,15 +436,28 @@
     white-space: nowrap;
   }
   .badge {
-    padding: 0.05rem 0.55rem;
+    padding: 0.05rem 0.6rem;
     border-radius: 999px;
     background: var(--surface-2);
     color: var(--muted);
     font-size: 0.75rem;
+    font-weight: 500;
   }
   .badge[data-state='enabled'],
   .badge[data-state='managed'] {
+    background: var(--ok-soft);
     color: var(--ok);
+  }
+  .buttons button {
+    border-color: transparent;
+    border-bottom: 2px solid var(--accent);
+    border-radius: 0;
+    padding: 0.1rem 0.1rem;
+    background: transparent;
+    font-size: 0.85rem;
+  }
+  .buttons button:hover {
+    color: var(--accent);
   }
   .confirm td {
     background: var(--surface-2);

@@ -42,7 +42,7 @@ const hostsAnswer = (list = [host('app.example.com', 300), host('api.example.com
 
 // api builds the fake server; `routes` overrides what /api/traffic and /api/hosts answer, as functions of the parameters.
 function api(routes = {}) {
-  const calls = { traffic: [], hosts: [] }
+  const calls = { traffic: [], hosts: [], attention: [] }
   vi.stubGlobal(
     'fetch',
     vi.fn((url) => {
@@ -55,6 +55,10 @@ function api(routes = {}) {
       if (u.pathname === '/api/hosts') {
         calls.hosts.push(params)
         return (routes.hosts ?? (() => json(hostsAnswer())))(params)
+      }
+      if (u.pathname === '/api/attention') {
+        calls.attention.push(params)
+        return (routes.attention ?? (() => json({ items: [] })))(params)
       }
       return Promise.reject(new Error(`unexpected request ${url}`))
     }),
@@ -73,6 +77,51 @@ const tile = (name) => screen.getByRole('group', { name })
 const choosePeriod = (label) => fireEvent.click(screen.getByRole('radio', { name: label }))
 
 afterEach(() => vi.unstubAllGlobals())
+
+describe('MetricsView needs attention', () => {
+  const items = [
+    { kind: 'errors_up', severity: 'bad', host: 'api.example.com', errors5xx: 4, rate: 0.04, previousRate: 0.01 },
+    { kind: 'host_slow', severity: 'warn', host: 'app.example.com', p95Ms: 640, medianP95Ms: 71 },
+  ]
+  const section = () => screen.getByRole('region', { name: 'Needs attention' })
+
+  it('asks for the window of the period, and lists what it finds', async () => {
+    const { calls } = await open({ attention: () => json({ items }) })
+    await waitFor(() => expect(within(section()).getByText('api.example.com returns more errors')).toBeTruthy())
+    expect(within(section()).getByText('app.example.com is slow')).toBeTruthy()
+    expect(calls.attention).toEqual([{ window: '24h' }])
+  })
+
+  it('asks again when the period changes', async () => {
+    const { calls } = await open()
+    await choosePeriod('7 days')
+    await waitFor(() => expect(calls.attention.at(-1)).toEqual({ window: '7d' }))
+  })
+
+  it('says nothing needs attention when it does not', async () => {
+    await open()
+    await waitFor(() => expect(within(section()).getByText(/nothing needs attention/i)).toBeTruthy())
+  })
+
+  it('is left out for a period the server does not answer', async () => {
+    const { calls } = await open()
+    await choosePeriod('30 days')
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull())
+    expect(calls.attention.every((c) => c.window !== '30d')).toBe(true)
+  })
+
+  it('is left out when it cannot be read, and the rest still shows', async () => {
+    await open({ attention: () => json({ error: 'boom' }, 500) })
+    expect(screen.queryByRole('region', { name: 'Needs attention' })).toBeNull()
+    expect(tile('Requests')).toBeTruthy()
+  })
+
+  it('marks the hosts it names in the table', async () => {
+    await open({ attention: () => json({ items }) })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'api.example.com' }).closest('tr').dataset.flag).toBe('errors'))
+    expect(screen.getByRole('button', { name: 'app.example.com' }).closest('tr').dataset.flag).toBe('slow')
+  })
+})
 
 describe('MetricsView loading', () => {
   it('has a title and a one-line subtitle', async () => {

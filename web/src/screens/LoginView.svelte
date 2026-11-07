@@ -41,8 +41,14 @@
 
 <main>
   <form onsubmit={submit}>
-    <h1>caddy-view</h1>
-    <p class="lede">Sign in to continue.</p>
+    <div class="brand">
+      <svg width="34" height="34" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="9" fill="var(--accent)" /><path d="M20.8 10.3 A7.5 7.5 0 1 0 20.8 21.7" fill="none" stroke="var(--accent-text)" stroke-width="3.2" stroke-linecap="round" /><circle cx="17.6" cy="16" r="2.3" fill="var(--accent-text)" /></svg>
+      <span>caddy<i>·</i>view</span>
+    </div>
+    <div>
+      <h1>Sign in</h1>
+      <p class="lede">to manage your Caddy</p>
+    </div>
 
     <label>
       <span>Username</span>
@@ -58,6 +64,7 @@
     {/if}
 
     <button type="submit" disabled={busy}>Sign in</button>
+    <p class="hint">Forgot it? Run <code>caddy-view reset-password</code> on the server.</p>
   </form>
 </main>
 
@@ -70,35 +77,48 @@
   }
   form {
     display: grid;
-    gap: 1rem;
-    width: min(100%, 22rem);
+    gap: 1.1rem;
+    width: min(100%, 25rem);
     padding: 2rem;
+    border: 1px solid var(--line2);
     border-radius: var(--radius-lg);
-    background: var(--surface);
-    box-shadow: var(--shadow);
+    background: linear-gradient(155deg, var(--accent-soft), transparent 52%), var(--surface);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    font: 700 1.3rem / 1 var(--display);
+    letter-spacing: -0.025em;
+  }
+  .brand i {
+    color: var(--accent);
+    font-style: normal;
   }
   h1 {
     margin: 0;
-    font-size: 1.4rem;
-    letter-spacing: -0.01em;
+    font: 600 1.9rem / 1.15 var(--display);
+    letter-spacing: -0.025em;
   }
   .lede {
-    margin: -0.5rem 0 0;
+    margin: 0.2rem 0 0;
     color: var(--muted);
   }
   label {
     display: grid;
     gap: 0.35rem;
-    font-size: 0.9rem;
   }
   label span {
     color: var(--muted);
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
   input {
-    padding: 0.6rem 0.75rem;
-    border: 1px solid var(--border);
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--line2);
     border-radius: var(--radius);
-    background: var(--bg);
+    background: var(--surface);
     color: var(--text);
     font: inherit;
   }
@@ -107,7 +127,7 @@
     outline-offset: 1px;
   }
   button {
-    padding: 0.65rem 1rem;
+    padding: 0.7rem 1rem;
     border: 0;
     border-radius: var(--radius);
     background: var(--accent);
@@ -122,7 +142,17 @@
   }
   .error {
     margin: 0;
+    padding: 0.6rem 0.9rem;
+    border-left: 3px solid var(--bad);
+    border-radius: var(--radius);
+    background: var(--bad-soft);
     color: var(--bad);
     font-size: 0.9rem;
+  }
+  .hint {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-align: center;
   }
 </style>

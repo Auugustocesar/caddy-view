@@ -1,8 +1,11 @@
 <script>
   import { formatBytes, formatCount, formatMs } from '../lib/format.js'
 
-  /** @type {{hosts: Array<{host: string, requests: number, bytes: number, errors5xx: number, avgMs: number|null, p95Ms: number|null}>, selected?: string, onselect?: (host: string) => void}} */
-  let { hosts, selected = '', onselect = () => {} } = $props()
+  /**
+   * `flags` marks hosts that need attention: 'errors' for more 5xx than before, 'slow' for a p95 far above the others.
+   * @type {{hosts: Array<{host: string, requests: number, bytes: number, errors5xx: number, avgMs: number|null, p95Ms: number|null}>, selected?: string, flags?: Record<string, 'errors'|'slow'>, onselect?: (host: string) => void}}
+   */
+  let { hosts, selected = '', flags = {}, onselect = () => {} } = $props()
 </script>
 
 {#if hosts.length === 0}
@@ -17,7 +20,7 @@
       </thead>
       <tbody>
         {#each hosts as h (h.host)}
-          <tr data-errors={h.errors5xx > 0 ? 'true' : undefined}>
+          <tr data-errors={h.errors5xx > 0 ? 'true' : undefined} data-flag={flags[h.host]}>
             <td class="host">
               {#if h.host === ''}
                 (no host)
@@ -29,7 +32,7 @@
             <td class="num">{formatBytes(h.bytes)}</td>
             <td class="num errors">{formatCount(h.errors5xx)}</td>
             <td class="num">{formatMs(h.avgMs)}</td>
-            <td class="num">{formatMs(h.p95Ms)}</td>
+            <td class="num p95">{formatMs(h.p95Ms)}</td>
           </tr>
         {/each}
       </tbody>
@@ -63,9 +66,8 @@
   }
   th {
     color: var(--muted);
-    font-size: 0.7rem;
-    font-weight: 600;
-    letter-spacing: 0.06em;
+    font: 500 0.72rem / 1.2 var(--mono);
+    letter-spacing: 0.08em;
     text-transform: uppercase;
   }
   .num {
@@ -90,6 +92,14 @@
   }
   tr[data-errors='true'] .errors {
     color: var(--bad);
+    font-weight: 600;
+  }
+  tr[data-flag='errors'] .errors {
+    color: var(--bad);
+    font-weight: 600;
+  }
+  tr[data-flag='slow'] .p95 {
+    color: var(--warn);
     font-weight: 600;
   }
 </style>
