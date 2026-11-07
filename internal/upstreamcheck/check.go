@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -77,10 +78,20 @@ func (c *Checker) Check(ctx context.Context, address string) Result {
 	if dial == nil {
 		dial = (&net.Dialer{}).DialContext
 	}
+	// A connection that opened and then got no answer means the address was reached and nobody spoke HTTP. Which error
+	// that ends in depends on timing and platform, and one of them has no type to test for, so it is not read from the error.
+	var connected atomic.Bool
+	dialled := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dial(ctx, network, addr)
+		if err == nil {
+			connected.Store(true)
+		}
+		return conn, err
+	}
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			DialContext:       dial,
+			DialContext:       dialled,
 			DisableKeepAlives: true,
 			// The check asks whether the upstream is there, not whether its certificate is good.
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // see above
@@ -100,6 +111,9 @@ func (c *Checker) Check(ctx context.Context, address string) Result {
 	if err != nil {
 		if ctx.Err() != nil {
 			return c.result(Unknown, 0, 0) // we were stopped; that says nothing about the upstream
+		}
+		if connected.Load() {
+			return c.result(Down, 0, 0)
 		}
 		return c.result(classify(err), 0, 0)
 	}
@@ -150,14 +164,29 @@ func classify(err error) State {
 	switch {
 	case errors.As(err, &dnsErr): // even a lookup that timed out: the upstream was never reached
 		return Unknown
-	case errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH):
+	case isErrno(err, syscall.ENETUNREACH, wsaENETUNREACH), isErrno(err, syscall.EHOSTUNREACH, wsaEHOSTUNREACH):
 		return Unknown
-	case errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, syscall.ECONNRESET),
-		errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+	case isErrno(err, syscall.ECONNREFUSED, wsaECONNREFUSED), isErrno(err, syscall.ECONNRESET, wsaECONNRESET),
+		isErrno(err, syscall.ECONNABORTED, wsaECONNABORTED), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
 		return Down
 	case errors.As(err, &netErr) && netErr.Timeout(), errors.Is(err, context.DeadlineExceeded):
 		return Down
 	default:
 		return Unknown
 	}
+}
+
+// The Windows socket error numbers. Windows reports a refused connection as WSAECONNREFUSED, which is not the value of
+// syscall.ECONNREFUSED there, so errors.Is would miss it. No Unix errno reaches these numbers, so one list serves all.
+const (
+	wsaECONNABORTED syscall.Errno = 10053
+	wsaECONNRESET   syscall.Errno = 10054
+	wsaECONNREFUSED syscall.Errno = 10061
+	wsaENETUNREACH  syscall.Errno = 10051
+	wsaEHOSTUNREACH syscall.Errno = 10065
+)
+
+// isErrno reports whether err is the system error unix, or its Windows socket counterpart win.
+func isErrno(err error, unix, win syscall.Errno) bool {
+	return errors.Is(err, unix) || errors.Is(err, win)
 }
