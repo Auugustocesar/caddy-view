@@ -305,7 +305,7 @@ Every route of the API, and so the whole UI, needs a session, except `POST /api/
 
 ## Install
 
-See "Quick start" for Docker and for the release archives. To build it yourself, Go 1.26.10 or newer is required (older
+See "Quick start" for Docker and for the release archives. To build it yourself, Go 1.26.11 or newer is required (older
 releases have known standard library vulnerabilities, and `go install` fetches the right toolchain by itself):
 
 ```sh
